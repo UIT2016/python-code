@@ -1,0 +1,55 @@
+# 文档（体积大或常为本地阅读文件）
+*.pdf
+*.epub
+
+# 编辑器 / IDE
+.vscode/
+.idea/
+
+# Python 字节码与缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# 打包与构建产物
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# 虚拟环境
+.venv/
+venv/
+ENV/
+env/
+
+# 测试、类型检查、格式化缓存
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+htmlcov/
+
+# 环境与密钥（勿提交真实密钥）
+.env
+.env.*
+!.env.example
+
+# 消息模块：本地密钥与可选请求头覆盖（示例文件为 *.example.json）
+message/config.local.json
+message/header.local.json
+
+# 操作系统杂项
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Jupyter
+.ipynb_checkpoints/
+
+# 本仓库：下载的中间文件目录
+whisper/downloads/

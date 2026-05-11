@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>聊天室消息分析</title>
+  <style>
+    :root { --bg: #0f1419; --card: #1a2332; --text: #e7ecf3; --muted: #8b9cb3; --accent: #3d8bfd; --border: #2a3548; }
+    * { box-sizing: border-box; }
+    body { font-family: "Segoe UI", "PingFang SC", sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 1.5rem; line-height: 1.5; }
+    h1 { font-size: 1.35rem; font-weight: 600; margin: 0 0 1rem; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem; max-width: 960px; }
+    .row { margin-bottom: 1.25rem; }
+    label.block { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 0.35rem; }
+    input[type="date"] { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 0.45rem 0.6rem; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem; }
+    .toolbar button { background: var(--border); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 0.35rem 0.75rem; cursor: pointer; font-size: 0.85rem; }
+    .toolbar button:hover { border-color: var(--accent); }
+    .rooms { max-height: 320px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.75rem; }
+    .room-line { display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0; border-bottom: 1px solid var(--border); }
+    .room-line:last-child { border-bottom: none; }
+    .room-line input { accent-color: var(--accent); }
+    .hint { font-size: 0.8rem; color: var(--muted); margin-top: 0.35rem; }
+    .submit { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 0.6rem 1.25rem; font-size: 0.95rem; cursor: pointer; }
+    .submit:hover { filter: brightness(1.08); }
+    .flash { padding: 0.65rem 0.85rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.9rem; }
+    .flash.err { background: #3d1f24; border: 1px solid #8b3a44; }
+    .flash.ok { background: #1a2e24; border: 1px solid #2d6a4f; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin-top: 1rem; }
+    th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 500; }
+    .mono { font-family: ui-monospace, monospace; font-size: 0.82rem; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>批量分析聊天室</h1>
+    {% for category, msg in get_flashed_messages(with_categories=true) %}
+      <div class="flash {{ 'err' if category == 'error' else 'ok' }}">{{ msg }}</div>
+    {% endfor %}
+
+    <form method="post" action="{{ url_for('index') }}" id="form">
+      <div class="row">
+        <label class="block" for="from_date">消息日期截断（仅保留该日 00:00 及之后的消息）</label>
+        <input type="date" id="from_date" name="from_date" required value="{{ default_date }}" />
+        <p class="hint">在接口返回的最近 {{ page_size }} 条内按时间过滤后再走原有分析与落盘逻辑。</p>
+      </div>
+
+      <div class="row">
+        <span class="block">从 rooms.json 选择聊天室</span>
+        <div class="toolbar">
+          <button type="button" id="btn-all">全选</button>
+          <button type="button" id="btn-none">全不选</button>
+        </div>
+        <div class="rooms">
+          {% for r in rooms %}
+          <div class="room-line">
+            <input type="checkbox" name="room_ids" value="{{ r.id }}" id="rid-{{ r.id }}" />
+            <label for="rid-{{ r.id }}">{{ r.title }} <span class="mono">({{ r.id }})</span></label>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <button type="submit" class="submit">开始分析</button>
+    </form>
+
+    {% if results %}
+    <h2 style="font-size:1.05rem;margin-top:1.5rem;">本次结果</h2>
+    <table>
+      <thead>
+        <tr><th>房间</th><th>状态</th><th>过滤后条数</th><th>说明</th></tr>
+      </thead>
+      <tbody>
+        {% for r in results %}
+        <tr>
+          <td>{{ r.title }} <span class="mono">({{ r.id }})</span></td>
+          <td>{{ r.status }}</td>
+          <td>{{ r.msg_count }}</td>
+          <td class="mono">{{ r.detail }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+  <script>
+    document.getElementById("btn-all").onclick = () => {
+      document.querySelectorAll('input[name="room_ids"]').forEach((c) => (c.checked = true));
+    };
+    document.getElementById("btn-none").onclick = () => {
+      document.querySelectorAll('input[name="room_ids"]').forEach((c) => (c.checked = false));
+    };
+  </script>
+</body>
+</html>
