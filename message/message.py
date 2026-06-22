@@ -8,22 +8,76 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 from config_loader import load_config
 from flask import Flask, flash, render_template, request
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
 BASE_DIR = Path(__file__).resolve().parent
+MESSAGE_DATA_DIR = BASE_DIR / "message_data"
 
 cfg = load_config(BASE_DIR)
 
 API_URL = cfg["msg_api_url"]
 HEADERS = cfg["headers"]
-DEEPSEEK_API_KEY = cfg["api_key"]
-DEEPSEEK_API_BASE = cfg["api_url"]
-MODEL = cfg["model"]
-PAGE_SIZE = 30
+DEFAULT_MSG_PAGE_SIZE: int = cfg["msg_pagesize"]
 
 
-def fetch_messages(rid: int, msgid: int = 0, pagesize: int = PAGE_SIZE) -> List[Dict]:
+def _clamp_pagesize(n: Any) -> int:
+    try:
+        v = int(n)
+    except (TypeError, ValueError):
+        return DEFAULT_MSG_PAGE_SIZE
+    return max(1, min(v, 2000))
+
+
+def _parse_createtime(value: Any) -> int:
+    """解析 createtime：支持毫秒时间戳（int/数字字符串）或 'YYYY-MM-DD HH:MM:SS' 字符串。"""
+    if value is None:
+        return 0
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return 0
+        if s.isdigit():
+            return int(s)
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+            try:
+                return int(datetime.strptime(s, fmt).timestamp() * 1000)
+            except ValueError:
+                continue
+    return 0
+
+
+def _parse_msg_content(msg_raw: Any) -> List[Dict[str, Any]]:
+    """解析 msg 字段：接口返回 JSON 字符串，少数情况下可能已是 list。"""
+    if msg_raw is None:
+        return []
+    if isinstance(msg_raw, list):
+        return msg_raw
+    if isinstance(msg_raw, str):
+        if not msg_raw.strip():
+            return []
+        try:
+            parsed = json.loads(msg_raw)
+        except json.JSONDecodeError:
+            return []
+        if isinstance(parsed, list):
+            return parsed
+        if isinstance(parsed, dict):
+            return [parsed]
+    return []
+
+
+def _extract_text(msg_content: List[Dict[str, Any]]) -> str:
+    parts = []
+    for part in msg_content:
+        if isinstance(part, dict) and part.get("type") == "text":
+            text = part.get("msg")
+            if text:
+                parts.append(str(text))
+    return "\n".join(parts)
+
+
+def fetch_messages(rid: int, msgid: int = 0, pagesize: int = DEFAULT_MSG_PAGE_SIZE) -> List[Dict]:
     """
     获取指定聊天室的消息列表
     :param rid: 房间ID
@@ -46,19 +100,22 @@ def fetch_messages(rid: int, msgid: int = 0, pagesize: int = PAGE_SIZE) -> List[
             return []
         parsed_list = []
         for item in data.get("list", []):
-            msg_json_str = item.get("msg", "[]")
             try:
-                msg_content = json.loads(msg_json_str)
-                full_text = "\n".join([part["msg"] for part in msg_content if part.get("type") == "text"])
+                msg_content = _parse_msg_content(item.get("msg"))
+                full_text = _extract_text(msg_content)
+                createtime_ms = _parse_createtime(item.get("createtime"))
+                if createtime_ms <= 0:
+                    print(f"  消息 {item.get('id')} 的 createtime 无法解析: {item.get('createtime')!r}")
+                    continue
                 parsed_item = {
                     "id": item["id"],
-                    "createtime": item["createtime"],
-                    "datetime": datetime.fromtimestamp(item["createtime"] / 1000).strftime("%Y-%m-%d %H:%M:%S"),
+                    "createtime": createtime_ms,
+                    "datetime": datetime.fromtimestamp(createtime_ms / 1000).strftime("%Y-%m-%d %H:%M:%S"),
                     "raw_msg": full_text,
                 }
                 parsed_list.append(parsed_item)
-            except json.JSONDecodeError:
-                print(f"  消息 {item['id']} 的 msg 字段解析失败")
+            except Exception as e:
+                print(f"  消息 {item.get('id')} 解析失败: {e}")
                 continue
         return parsed_list
     except Exception as e:
@@ -72,91 +129,89 @@ def filter_messages_from_date(messages: List[Dict], from_date: str) -> List[Dict
         hour=0, minute=0, second=0, microsecond=0
     )
     cutoff_ms = int(cutoff.timestamp() * 1000)
-    kept = [m for m in messages if m["createtime"] >= cutoff_ms]
-    return sorted(kept, key=lambda x: x["createtime"])
+    kept = [m for m in messages if _parse_createtime(m.get("createtime")) >= cutoff_ms]
+    return sorted(kept, key=lambda x: _parse_createtime(x.get("createtime")))
 
 
-def build_analysis_prompt(messages: List[Dict], room_title: str = "") -> str:
-    """根据消息生成 prompt（取最新30条）"""
-    if not messages:
-        return "无消息内容"
-    sorted_msgs = sorted(messages, key=lambda x: x["createtime"])
-    latest_msgs = sorted_msgs[-30:] if len(sorted_msgs) > 30 else sorted_msgs
-
-    text_blocks = []
-    for msg in latest_msgs:
-        text_blocks.append(f"[{msg['datetime']}]\n{msg['raw_msg']}\n")
-    combined = "\n---\n".join(text_blocks)
-
-    room_info = f"（聊天室：{room_title}）\n" if room_title else ""
-    return f"""
-你是一位专业的股票投资分析助手。{room_info}以下是一组投资聊天室的历史消息，请综合分析：
-
-1. 整体市场情绪（乐观/谨慎/恐慌）
-2. 主要关注板块和个股
-3. 关键操作策略建议
-4. 潜在风险和机会
-5. 对发言者核心观点的总结
-
-消息内容：
-{combined}
-
-请给出清晰、实用的分析结论。
-"""
-
-
-def analyze_with_deepseek(messages: List[Dict], api_key: str, room_title: str = "") -> str:
-    """调用 DeepSeek API 进行分析"""
-    if not messages:
-        return "该房间无有效消息，跳过分析。"
-    try:
-        llm = ChatOpenAI(
-            model=MODEL,
-            openai_api_key=api_key,
-            openai_api_base=DEEPSEEK_API_BASE,
-            temperature=0.7,
-        )
-        prompt = build_analysis_prompt(messages, room_title)
-        response = llm.invoke([SystemMessage(content="你是一位专业的股票投资分析助手。"), HumanMessage(content=prompt)])
-        return response.content
-    except Exception as e:
-        return f"AI 分析失败: {e}"
-
-
-def _safe_title(title: str) -> str:
-    return "".join(c for c in title if c.isalnum() or c in (" ", "-", "_")).rstrip()
-
-
-def process_one_room(
+def fetch_room_messages(
     rid: int,
     title: str,
-    api_key: str,
-    output_dir: Path,
     from_date: Optional[str] = None,
-) -> Tuple[str, int, str]:
+    pagesize: Optional[int] = None,
+) -> Tuple[str, int, Optional[Dict[str, Any]], str]:
     """
-    拉取消息 → 可选按日期截断 → 分析与落盘。
-    返回 (status, 用于分析的条数, 详情说明)。
+    拉取单个聊天室消息，可选按日期截断。
+    返回 (status, 消息条数, 房间数据或 None, 详情说明)。
     status: ok | skip | error
     """
-    messages = fetch_messages(rid=rid, msgid=0, pagesize=PAGE_SIZE)
+    ps = _clamp_pagesize(pagesize if pagesize is not None else DEFAULT_MSG_PAGE_SIZE)
+    messages = fetch_messages(rid=rid, msgid=0, pagesize=ps)
     if not messages:
-        return "skip", 0, "无消息"
+        return "skip", 0, None, "无消息"
     if from_date:
         messages = filter_messages_from_date(messages, from_date)
     if not messages:
-        return "skip", 0, f"在选定日期 {from_date} 之后无消息（当前仅拉取最近 {PAGE_SIZE} 条）"
-    analysis = analyze_with_deepseek(messages, api_key, room_title=title)
-    safe = _safe_title(title) or str(rid)
-    msg_file = output_dir / f"{rid}_{safe}_messages.json"
-    ana_file = output_dir / f"{rid}_{safe}_analysis.txt"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    with open(msg_file, "w", encoding="utf-8") as f:
-        json.dump(messages, f, ensure_ascii=False, indent=2)
-    with open(ana_file, "w", encoding="utf-8") as f:
-        f.write(analysis)
-    n = len(messages)
-    return "ok", n, f"{msg_file.name} / {ana_file.name}"
+        return "skip", 0, None, f"在选定日期 {from_date} 之后无消息（当前仅拉取最近 {ps} 条）"
+    room_data = {
+        "id": rid,
+        "title": title,
+        "message_count": len(messages),
+        "messages": messages,
+    }
+    return "ok", len(messages), room_data, f"获取 {len(messages)} 条消息"
+
+
+def save_messages_by_date(
+    date_str: str,
+    rooms_data: List[Dict[str, Any]],
+    from_date: Optional[str] = None,
+    pagesize: int = DEFAULT_MSG_PAGE_SIZE,
+) -> Path:
+    """将各聊天室消息汇总保存为以日期命名的 JSON 文件。"""
+    MESSAGE_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    total_messages = sum(r.get("message_count", 0) for r in rooms_data)
+    payload = {
+        "date": date_str,
+        "from_date": from_date or date_str,
+        "pagesize": pagesize,
+        "collected_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "room_count": len(rooms_data),
+        "total_messages": total_messages,
+        "rooms": rooms_data,
+    }
+    out_file = MESSAGE_DATA_DIR / f"{date_str}.json"
+    with open(out_file, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    return out_file
+
+
+def collect_rooms(
+    rooms: List[Dict[str, Any]],
+    date_str: str,
+    from_date: Optional[str] = None,
+    pagesize: Optional[int] = None,
+) -> Tuple[Optional[Path], List[Dict[str, Any]]]:
+    """批量拉取聊天室消息并保存到日期文件，返回 (输出路径, 各房间处理结果)。"""
+    ps = _clamp_pagesize(pagesize if pagesize is not None else DEFAULT_MSG_PAGE_SIZE)
+    rooms_data: List[Dict[str, Any]] = []
+    results: List[Dict[str, Any]] = []
+    for room in rooms:
+        rid, title = room["id"], room["title"]
+        status, n, room_data, detail = fetch_room_messages(
+            rid, title, from_date=from_date, pagesize=ps
+        )
+        label = {"ok": "成功", "skip": "跳过", "error": "失败"}.get(status, status)
+        results.append({"id": rid, "title": title, "status": label, "msg_count": n, "detail": detail})
+        if room_data:
+            rooms_data.append(room_data)
+        time.sleep(1)
+    if not rooms_data:
+        return None, results
+    out_file = save_messages_by_date(date_str, rooms_data, from_date=from_date, pagesize=ps)
+    for r in results:
+        if r["status"] == "成功":
+            r["detail"] = out_file.name
+    return out_file, results
 
 
 def main():
@@ -169,39 +224,37 @@ def main():
         rooms = json.load(f)
     print(f"加载了 {len(rooms)} 个聊天室")
 
-    api_key = DEEPSEEK_API_KEY
-    output_dir = BASE_DIR / "analysis_results"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    today = datetime.now().strftime("%Y-%m-%d")
+    print(f"\n开始拉取消息，汇总保存为 {today}.json")
 
-    for idx, room in enumerate(rooms, 1):
-        rid = room["id"]
-        title = room["title"]
-        print(f"\n[{idx}/{len(rooms)}] 正在处理房间: {title} (ID: {rid})")
+    out_file, results = collect_rooms(rooms, date_str=today, from_date=None, pagesize=DEFAULT_MSG_PAGE_SIZE)
+    for idx, (room, result) in enumerate(zip(rooms, results), 1):
+        print(f"\n[{idx}/{len(rooms)}] {room['title']} (ID: {room['id']})")
+        print(f"  状态: {result['status']}，消息: {result['msg_count']} 条 ({result['detail']})")
 
-        status, n, detail = process_one_room(rid, title, api_key, output_dir, from_date=None)
-        print(f"  获取并用于分析的消息: {n} 条 ({detail})")
-
-        if status == "skip":
-            print("  跳过")
-            continue
-
-        print("  已完成分析与保存")
-        time.sleep(1)
-
-    print("\n全部房间处理完成！")
+    if out_file:
+        print(f"\n全部完成！汇总文件: {out_file}")
+    else:
+        print("\n未获取到任何有效消息，未生成汇总文件。")
 
 
 def create_app() -> Flask:
     app = Flask(__name__, template_folder=str(BASE_DIR / "templates"))
-    app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-message-analysis-change-in-prod")
+    app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-message-fetch-change-in-prod")
 
     @app.route("/", methods=["GET", "POST"])
     def index():
         today = datetime.now().strftime("%Y-%m-%d")
+        form_ps = DEFAULT_MSG_PAGE_SIZE
+        if request.method == "POST":
+            form_ps = _clamp_pagesize(request.form.get("msg_pagesize"))
+
         rooms_file = BASE_DIR / "rooms.json"
         if not rooms_file.exists():
             flash("未找到 rooms.json，请先运行 get_room_list.py。", "error")
-            return render_template("index.html", rooms=[], results=None, default_date=today, page_size=PAGE_SIZE)
+            return render_template(
+                "index.html", rooms=[], results=None, default_date=today, msg_pagesize=form_ps
+            )
 
         with open(rooms_file, "r", encoding="utf-8") as f:
             rooms: List[Dict[str, Any]] = json.load(f)
@@ -218,7 +271,7 @@ def create_app() -> Flask:
                     rooms=rooms,
                     results=None,
                     default_date=from_date or today,
-                    page_size=PAGE_SIZE,
+                    msg_pagesize=form_ps,
                 )
             if not from_date:
                 flash("请选择日期。", "error")
@@ -227,7 +280,7 @@ def create_app() -> Flask:
                     rooms=rooms,
                     results=None,
                     default_date=today,
-                    page_size=PAGE_SIZE,
+                    msg_pagesize=form_ps,
                 )
             try:
                 datetime.strptime(from_date, "%Y-%m-%d")
@@ -238,7 +291,7 @@ def create_app() -> Flask:
                     rooms=rooms,
                     results=None,
                     default_date=from_date,
-                    page_size=PAGE_SIZE,
+                    msg_pagesize=form_ps,
                 )
 
             id_set = {r["id"] for r in rooms}
@@ -259,20 +312,19 @@ def create_app() -> Flask:
                     rooms=rooms,
                     results=None,
                     default_date=from_date,
-                    page_size=PAGE_SIZE,
+                    msg_pagesize=form_ps,
                 )
 
-            api_key = DEEPSEEK_API_KEY
-            output_dir = BASE_DIR / "analysis_results"
-            results = []
-            for room in selected:
-                rid, title = room["id"], room["title"]
-                status, n, detail = process_one_room(rid, title, api_key, output_dir, from_date=from_date)
-                label = {"ok": "成功", "skip": "跳过", "error": "失败"}.get(status, status)
-                results.append({"id": rid, "title": title, "status": label, "msg_count": n, "detail": detail})
-                time.sleep(1)
-
-            flash(f"已处理 {len(results)} 个聊天室（日期截断：{from_date} 起）。", "message")
+            out_file, results = collect_rooms(
+                selected, date_str=from_date, from_date=from_date, pagesize=form_ps
+            )
+            if out_file:
+                flash(
+                    f"已处理 {len(results)} 个聊天室，汇总保存至 {out_file.name}（日期截断：{from_date} 起，单次拉取 {form_ps} 条）。",
+                    "message",
+                )
+            else:
+                flash("未获取到任何有效消息，未生成汇总文件。", "error")
 
         form_date = (request.form.get("from_date") or "").strip() if request.method == "POST" else ""
         default_date = form_date or today
@@ -281,7 +333,7 @@ def create_app() -> Flask:
             rooms=rooms,
             results=results,
             default_date=default_date,
-            page_size=PAGE_SIZE,
+            msg_pagesize=form_ps,
         )
 
     return app

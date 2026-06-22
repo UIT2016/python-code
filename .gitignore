@@ -41,6 +41,8 @@ htmlcov/
 # 消息模块：本地密钥与可选请求头覆盖（示例文件为 *.example.json）
 message/config.local.json
 message/header.local.json
+message/message_data/
+message/analysis_results/
 
 # 操作系统杂项
 .DS_Store

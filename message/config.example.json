@@ -4,5 +4,6 @@
   "api_key": "",
   "api_url": "https://api.deepseek.com",
   "msg_api_url": "https://mx2025.hhhuu.com/5/api/msg/list",
-  "model": "deepseek-v4-pro"
+  "model": "deepseek-v4-pro",
+  "msg_pagesize": 30
 }

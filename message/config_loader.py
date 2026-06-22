@@ -53,12 +53,22 @@ def load_config(base_dir: Optional[Path] = None) -> Dict[str, Any]:
     if not api_key:
         raise ValueError("config.local.json 中需填写 api_key")
 
+    def _clamp_msg_pagesize(raw: Any) -> int:
+        try:
+            n = int(raw)
+        except (TypeError, ValueError):
+            return 30
+        return max(1, min(n, 2000))
+
+    msg_pagesize = _clamp_msg_pagesize(config.get("msg_pagesize", 30))
+
     return {
         "headers": headers,
         "api_key": api_key,
         "api_url": config.get("api_url", "https://api.deepseek.com"),
         "model": config.get("model", "deepseek-v4-pro"),
         "msg_api_url": config.get("msg_api_url", "https://mx2025.hhhuu.com/5/api/msg/list"),
+        "msg_pagesize": msg_pagesize,
         "token": config.get("token"),
         "cookie": config.get("cookie"),
     }
