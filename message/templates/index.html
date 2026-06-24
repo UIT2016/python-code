@@ -43,13 +43,7 @@
       <div class="row">
         <label class="block" for="from_date">消息日期截断（仅保留该日 00:00 及之后的消息）</label>
         <input type="date" id="from_date" name="from_date" required value="{{ default_date }}" />
-        <p class="hint">在接口单次拉取的最近若干条内按时间过滤后汇总保存；文件名即为所选日期（如 2025-06-22.json）。拉取条数见下方（默认 30，上限 2000）。</p>
-      </div>
-
-      <div class="row">
-        <label class="block" for="msg_pagesize">单次拉取消息条数（pagesize）</label>
-        <input type="number" id="msg_pagesize" name="msg_pagesize" min="1" max="2000" step="1" required value="{{ msg_pagesize }}" />
-        <p class="hint">与消息接口的 pagesize 一致；写入 config.local.json 的 <span class="mono">msg_pagesize</span> 可作为默认（本页提交时以表单为准）。</p>
+        <p class="hint">接口 pagesize 固定 30。首次 <span class="mono">msgid=0</span> 拉最新一页，之后用上一批最老消息 id 作为 <span class="mono">msgid</span> 继续翻页，直到该日之前为止；汇总文件名为所选日期（如 2026-06-22.json）。</p>
       </div>
 
       <div class="row">

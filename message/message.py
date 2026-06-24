@@ -16,15 +16,17 @@ cfg = load_config(BASE_DIR)
 
 API_URL = cfg["msg_api_url"]
 HEADERS = cfg["headers"]
-DEFAULT_MSG_PAGE_SIZE: int = cfg["msg_pagesize"]
+# 接口 pagesize 固定为 30，修改无效
+API_PAGE_SIZE = 30
+MAX_FETCH_PAGES = 500
+PAGE_FETCH_DELAY_SEC = 0.3
 
 
-def _clamp_pagesize(n: Any) -> int:
-    try:
-        v = int(n)
-    except (TypeError, ValueError):
-        return DEFAULT_MSG_PAGE_SIZE
-    return max(1, min(v, 2000))
+def _date_cutoff_ms(from_date: str) -> int:
+    cutoff = datetime.strptime(from_date.strip(), "%Y-%m-%d").replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    return int(cutoff.timestamp() * 1000)
 
 
 def _parse_createtime(value: Any) -> int:
@@ -77,18 +79,17 @@ def _extract_text(msg_content: List[Dict[str, Any]]) -> str:
     return "\n".join(parts)
 
 
-def fetch_messages(rid: int, msgid: int = 0, pagesize: int = DEFAULT_MSG_PAGE_SIZE) -> List[Dict]:
+def fetch_messages(rid: int, msgid: int = 0) -> List[Dict]:
     """
-    获取指定聊天室的消息列表
+    获取指定聊天室的一页消息（pagesize 固定 30）。
     :param rid: 房间ID
-    :param msgid: 起始消息ID，0表示最新
-    :param pagesize: 每页条数
+    :param msgid: 0 表示最新；翻页时传入上一批最老消息的 id
     :return: 解析后的消息列表
     """
     payload = {
         "rid": rid,
         "msgid": msgid,
-        "pagesize": pagesize,
+        "pagesize": API_PAGE_SIZE,
         "tt": int(time.time() * 1000),
     }
     try:
@@ -123,49 +124,89 @@ def fetch_messages(rid: int, msgid: int = 0, pagesize: int = DEFAULT_MSG_PAGE_SI
         return []
 
 
-def filter_messages_from_date(messages: List[Dict], from_date: str) -> List[Dict]:
-    """仅保留 createtime >= 所选日期本地 00:00:00 的消息，并按时间升序返回。"""
-    cutoff = datetime.strptime(from_date.strip(), "%Y-%m-%d").replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
-    cutoff_ms = int(cutoff.timestamp() * 1000)
-    kept = [m for m in messages if _parse_createtime(m.get("createtime")) >= cutoff_ms]
-    return sorted(kept, key=lambda x: _parse_createtime(x.get("createtime")))
+def fetch_messages_paginated(
+    rid: int,
+    from_date: Optional[str] = None,
+    *,
+    max_pages: int = MAX_FETCH_PAGES,
+) -> Tuple[List[Dict], int]:
+    """
+    分页拉取聊天室消息。
+    首次 msgid=0；之后将上一批最老消息的 id 作为 msgid 继续请求，直到：
+      - 返回空列表或不足一页
+      - 本批最老消息早于 from_date（若指定）
+      - 达到 max_pages
+    返回 (消息列表按时间升序, 实际请求页数)。
+    """
+    cutoff_ms = _date_cutoff_ms(from_date) if from_date else None
+    by_id: Dict[int, Dict] = {}
+    msgid = 0
+    page_count = 0
+
+    while page_count < max_pages:
+        batch = fetch_messages(rid=rid, msgid=msgid)
+        page_count += 1
+        if not batch:
+            break
+
+        oldest_id = min(m["id"] for m in batch)
+        oldest_time = min(m["createtime"] for m in batch)
+
+        for msg in batch:
+            if cutoff_ms is not None and msg["createtime"] < cutoff_ms:
+                continue
+            by_id[msg["id"]] = msg
+
+        if cutoff_ms is not None and oldest_time < cutoff_ms:
+            break
+        if len(batch) < API_PAGE_SIZE:
+            break
+        if oldest_id == msgid:
+            break
+
+        msgid = oldest_id
+        time.sleep(PAGE_FETCH_DELAY_SEC)
+
+    return sorted(by_id.values(), key=lambda m: m["createtime"]), page_count
 
 
 def fetch_room_messages(
     rid: int,
     title: str,
     from_date: Optional[str] = None,
-    pagesize: Optional[int] = None,
 ) -> Tuple[str, int, Optional[Dict[str, Any]], str]:
     """
-    拉取单个聊天室消息，可选按日期截断。
+    拉取单个聊天室消息，可选按日期截断并自动 msgid 翻页。
     返回 (status, 消息条数, 房间数据或 None, 详情说明)。
     status: ok | skip | error
     """
-    ps = _clamp_pagesize(pagesize if pagesize is not None else DEFAULT_MSG_PAGE_SIZE)
-    messages = fetch_messages(rid=rid, msgid=0, pagesize=ps)
-    if not messages:
-        return "skip", 0, None, "无消息"
     if from_date:
-        messages = filter_messages_from_date(messages, from_date)
+        messages, pages = fetch_messages_paginated(rid, from_date=from_date)
+    else:
+        messages = fetch_messages(rid=rid, msgid=0)
+        pages = 1
+
     if not messages:
-        return "skip", 0, None, f"在选定日期 {from_date} 之后无消息（当前仅拉取最近 {ps} 条）"
+        if from_date:
+            return "skip", 0, None, f"在选定日期 {from_date} 之后无消息（已请求 {pages} 页）"
+        return "skip", 0, None, "无消息"
+
     room_data = {
         "id": rid,
         "title": title,
         "message_count": len(messages),
         "messages": messages,
     }
-    return "ok", len(messages), room_data, f"获取 {len(messages)} 条消息"
+    detail = f"获取 {len(messages)} 条消息"
+    if pages > 1:
+        detail += f"（{pages} 页）"
+    return "ok", len(messages), room_data, detail
 
 
 def save_messages_by_date(
     date_str: str,
     rooms_data: List[Dict[str, Any]],
     from_date: Optional[str] = None,
-    pagesize: int = DEFAULT_MSG_PAGE_SIZE,
 ) -> Path:
     """将各聊天室消息汇总保存为以日期命名的 JSON 文件。"""
     MESSAGE_DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -173,7 +214,7 @@ def save_messages_by_date(
     payload = {
         "date": date_str,
         "from_date": from_date or date_str,
-        "pagesize": pagesize,
+        "pagesize": API_PAGE_SIZE,
         "collected_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "room_count": len(rooms_data),
         "total_messages": total_messages,
@@ -189,17 +230,13 @@ def collect_rooms(
     rooms: List[Dict[str, Any]],
     date_str: str,
     from_date: Optional[str] = None,
-    pagesize: Optional[int] = None,
 ) -> Tuple[Optional[Path], List[Dict[str, Any]]]:
     """批量拉取聊天室消息并保存到日期文件，返回 (输出路径, 各房间处理结果)。"""
-    ps = _clamp_pagesize(pagesize if pagesize is not None else DEFAULT_MSG_PAGE_SIZE)
     rooms_data: List[Dict[str, Any]] = []
     results: List[Dict[str, Any]] = []
     for room in rooms:
         rid, title = room["id"], room["title"]
-        status, n, room_data, detail = fetch_room_messages(
-            rid, title, from_date=from_date, pagesize=ps
-        )
+        status, n, room_data, detail = fetch_room_messages(rid, title, from_date=from_date)
         label = {"ok": "成功", "skip": "跳过", "error": "失败"}.get(status, status)
         results.append({"id": rid, "title": title, "status": label, "msg_count": n, "detail": detail})
         if room_data:
@@ -207,7 +244,7 @@ def collect_rooms(
         time.sleep(1)
     if not rooms_data:
         return None, results
-    out_file = save_messages_by_date(date_str, rooms_data, from_date=from_date, pagesize=ps)
+    out_file = save_messages_by_date(date_str, rooms_data, from_date=from_date)
     for r in results:
         if r["status"] == "成功":
             r["detail"] = out_file.name
@@ -225,9 +262,9 @@ def main():
     print(f"加载了 {len(rooms)} 个聊天室")
 
     today = datetime.now().strftime("%Y-%m-%d")
-    print(f"\n开始拉取消息，汇总保存为 {today}.json")
+    print(f"\n开始拉取消息（msgid 翻页，pagesize={API_PAGE_SIZE}），汇总保存为 {today}.json")
 
-    out_file, results = collect_rooms(rooms, date_str=today, from_date=None, pagesize=DEFAULT_MSG_PAGE_SIZE)
+    out_file, results = collect_rooms(rooms, date_str=today, from_date=today)
     for idx, (room, result) in enumerate(zip(rooms, results), 1):
         print(f"\n[{idx}/{len(rooms)}] {room['title']} (ID: {room['id']})")
         print(f"  状态: {result['status']}，消息: {result['msg_count']} 条 ({result['detail']})")
@@ -245,16 +282,11 @@ def create_app() -> Flask:
     @app.route("/", methods=["GET", "POST"])
     def index():
         today = datetime.now().strftime("%Y-%m-%d")
-        form_ps = DEFAULT_MSG_PAGE_SIZE
-        if request.method == "POST":
-            form_ps = _clamp_pagesize(request.form.get("msg_pagesize"))
 
         rooms_file = BASE_DIR / "rooms.json"
         if not rooms_file.exists():
             flash("未找到 rooms.json，请先运行 get_room_list.py。", "error")
-            return render_template(
-                "index.html", rooms=[], results=None, default_date=today, msg_pagesize=form_ps
-            )
+            return render_template("index.html", rooms=[], results=None, default_date=today)
 
         with open(rooms_file, "r", encoding="utf-8") as f:
             rooms: List[Dict[str, Any]] = json.load(f)
@@ -271,7 +303,6 @@ def create_app() -> Flask:
                     rooms=rooms,
                     results=None,
                     default_date=from_date or today,
-                    msg_pagesize=form_ps,
                 )
             if not from_date:
                 flash("请选择日期。", "error")
@@ -280,7 +311,6 @@ def create_app() -> Flask:
                     rooms=rooms,
                     results=None,
                     default_date=today,
-                    msg_pagesize=form_ps,
                 )
             try:
                 datetime.strptime(from_date, "%Y-%m-%d")
@@ -291,7 +321,6 @@ def create_app() -> Flask:
                     rooms=rooms,
                     results=None,
                     default_date=from_date,
-                    msg_pagesize=form_ps,
                 )
 
             id_set = {r["id"] for r in rooms}
@@ -312,15 +341,12 @@ def create_app() -> Flask:
                     rooms=rooms,
                     results=None,
                     default_date=from_date,
-                    msg_pagesize=form_ps,
                 )
 
-            out_file, results = collect_rooms(
-                selected, date_str=from_date, from_date=from_date, pagesize=form_ps
-            )
+            out_file, results = collect_rooms(selected, date_str=from_date, from_date=from_date)
             if out_file:
                 flash(
-                    f"已处理 {len(results)} 个聊天室，汇总保存至 {out_file.name}（日期截断：{from_date} 起，单次拉取 {form_ps} 条）。",
+                    f"已处理 {len(results)} 个聊天室，汇总保存至 {out_file.name}（日期截断：{from_date} 起，pagesize={API_PAGE_SIZE} 自动 msgid 翻页）。",
                     "message",
                 )
             else:
@@ -333,7 +359,6 @@ def create_app() -> Flask:
             rooms=rooms,
             results=results,
             default_date=default_date,
-            msg_pagesize=form_ps,
         )
 
     return app
