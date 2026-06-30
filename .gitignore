@@ -56,3 +56,7 @@ Desktop.ini
 # 本仓库：下载的中间文件目录
 whisper/downloads/
 tool/download/
+tool/transcripts/
+
+# tool 模块：本地 API 密钥（示例文件为 api_key.example.json）
+tool/api_key.local.json

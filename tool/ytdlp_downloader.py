@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,6 +24,8 @@ except ImportError:
 
 BASE_DIR = Path(__file__).resolve().parent
 DOWNLOAD_DIR = BASE_DIR / "download"
+AUDIO_EXTENSIONS = {".mp3", ".m4a", ".wav", ".opus", ".ogg", ".flac", ".aac", ".wma"}
+VIDEO_EXTENSIONS = {".mp4", ".mkv", ".webm", ".flv", ".avi", ".mov"}
 
 
 @dataclass
@@ -54,14 +57,29 @@ def _prompt_url() -> str:
         print("URL 不能为空，请重新输入。")
 
 
-def _extract_info(url: str) -> Dict[str, Any]:
-    print("\n正在解析视频信息，请稍候...")
-    opts = {
+def _is_bilibili_url(url: str) -> bool:
+    return "bilibili.com" in url.lower()
+
+
+def _base_ydl_opts(url: str) -> Dict[str, Any]:
+    """构建 yt-dlp 公共选项。B 站需携带 Origin/Referer，否则易触发 412。"""
+    opts: Dict[str, Any] = {
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        "extract_flat": False,
     }
+    if _is_bilibili_url(url):
+        opts["http_headers"] = {
+            "Origin": "https://www.bilibili.com",
+            "Referer": "https://www.bilibili.com/",
+        }
+    return opts
+
+
+def _extract_info(url: str) -> Dict[str, Any]:
+    print("\n正在解析视频信息，请稍候...")
+    opts = _base_ydl_opts(url)
+    opts["extract_flat"] = False
     with yt_dlp.YoutubeDL(opts) as ydl:
         return ydl.extract_info(url, download=False)
 
@@ -71,7 +89,8 @@ def _build_format_options(info: Dict[str, Any]) -> List[FormatOption]:
     duration = info.get("duration") or 0
     print(f"\n标题: {title}")
     if duration:
-        print(f"时长: {duration // 60:02d}:{duration % 60:02d}")
+        total_sec = int(duration)
+        print(f"时长: {total_sec // 60:02d}:{total_sec % 60:02d}")
 
     options: List[FormatOption] = []
     idx = 1
@@ -213,12 +232,10 @@ def _download(url: str, option: FormatOption) -> Path:
     outtmpl = str(DOWNLOAD_DIR / "%(title).80B [%(id)s].%(ext)s")
 
     ydl_opts: Dict[str, Any] = {
+        **_base_ydl_opts(url),
         "format": option.format_spec,
         "outtmpl": outtmpl,
-        "noplaylist": True,
         "progress_hooks": [_make_progress_hook()],
-        "quiet": True,
-        "no_warnings": True,
     }
 
     if option.audio_codec:
@@ -269,6 +286,73 @@ def main() -> None:
         sys.exit(1)
 
     print(f"\n下载完成: {saved}")
+    _maybe_transcribe(saved)
+
+
+def _prompt_yes_no(prompt: str, default: bool = True) -> bool:
+    suffix = "Y/n" if default else "y/N"
+    while True:
+        raw = input(f"\n{prompt} ({suffix}): ").strip().lower()
+        if not raw:
+            return default
+        if raw in ("y", "yes", "是"):
+            return True
+        if raw in ("n", "no", "否"):
+            return False
+        print("请输入 y 或 n。")
+
+
+def _extract_audio_from_video(video_path: Path) -> Path:
+    if not shutil.which("ffmpeg"):
+        print("\n错误: 未检测到 ffmpeg，无法从视频中提取音频。")
+        sys.exit(1)
+    output = video_path.with_suffix(".mp3")
+    print(f"\n正在从视频提取音频: {output.name}")
+    cmd = [
+        "ffmpeg", "-y", "-i", str(video_path),
+        "-vn", "-acodec", "libmp3lame", "-q:a", "2",
+        str(output),
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or b"").decode("utf-8", errors="replace")
+        print(f"\n音频提取失败: {stderr or exc}")
+        sys.exit(1)
+    return output
+
+
+def _ensure_audio_path(file_path: Path) -> Path:
+    ext = file_path.suffix.lower()
+    if ext in AUDIO_EXTENSIONS:
+        return file_path
+    if ext in VIDEO_EXTENSIONS:
+        return _extract_audio_from_video(file_path)
+    print(f"\n错误: 无法识别文件类型 {ext}，请选择音频格式或 MP4 视频。")
+    sys.exit(1)
+
+
+def _maybe_transcribe(saved: Path) -> None:
+    if not _prompt_yes_no("是否使用 Qwen3-ASR 将音频转为文字并保存到文档？"):
+        return
+    if str(BASE_DIR) not in sys.path:
+        sys.path.insert(0, str(BASE_DIR))
+    try:
+        from asr_transcriber import AsrError, transcribe_audio_file
+    except ImportError:
+        print("\n错误: 无法加载 asr_transcriber 模块。")
+        return
+    try:
+        audio_path = _ensure_audio_path(saved)
+        txt_path = transcribe_audio_file(audio_path)
+    except AsrError as exc:
+        print(f"\n转写失败: {exc}")
+        return
+    except Exception as exc:
+        print(f"\n转写失败: {exc}")
+        return
+    print(f"\n文字已保存: {txt_path}")
+    print(f"带时间戳版本: {txt_path.with_name(txt_path.stem + '.timed.txt')}")
 
 
 if __name__ == "__main__":
