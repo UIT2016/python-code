@@ -1,0 +1,6 @@
+# Netscape HTTP Cookie File
+# 用浏览器扩展「Get cookies.txt LOCALLY」导出 bilibili.com 的 Cookie，
+# 复制本文件为 bilibili_cookies.local.txt 并填入真实值（勿提交 git）。
+.bilibili.com	TRUE	/	TRUE	0	SESSDATA	你的SESSDATA
+.bilibili.com	TRUE	/	TRUE	0	bili_jct	你的bili_jct
+.bilibili.com	TRUE	/	TRUE	0	DedeUserID	你的用户ID

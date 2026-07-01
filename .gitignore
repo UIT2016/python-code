@@ -60,3 +60,7 @@ tool/transcripts/
 
 # tool 模块：本地 API 密钥（示例文件为 api_key.example.json）
 tool/api_key.local.json
+tool/bilibili_cookies.local.txt
+tool/*cookies*.txt
+!tool/bilibili_cookies.example.txt
+tool/transcripts.zip

@@ -24,6 +24,7 @@ except ImportError:
 
 BASE_DIR = Path(__file__).resolve().parent
 DOWNLOAD_DIR = BASE_DIR / "download"
+BILIBILI_COOKIES_FILE = BASE_DIR / "bilibili_cookies.local.txt"
 AUDIO_EXTENSIONS = {".mp3", ".m4a", ".wav", ".opus", ".ogg", ".flac", ".aac", ".wma"}
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".webm", ".flv", ".avi", ".mov"}
 
@@ -61,6 +62,19 @@ def _is_bilibili_url(url: str) -> bool:
     return "bilibili.com" in url.lower()
 
 
+def _resolve_bilibili_cookiefile() -> Optional[Path]:
+    if BILIBILI_COOKIES_FILE.is_file():
+        return BILIBILI_COOKIES_FILE
+    return None
+
+
+def _audio_format_spec(url: str) -> str:
+    """B 站（尤其充电视频）用 bv*+ba 合并轨再抽音频，避免 bestaudio 只下到试看片段。"""
+    if _is_bilibili_url(url):
+        return "bv*+ba/b"
+    return "bestaudio/best"
+
+
 def _base_ydl_opts(url: str) -> Dict[str, Any]:
     """构建 yt-dlp 公共选项。B 站需携带 Origin/Referer，否则易触发 412。"""
     opts: Dict[str, Any] = {
@@ -73,7 +87,24 @@ def _base_ydl_opts(url: str) -> Dict[str, Any]:
             "Origin": "https://www.bilibili.com",
             "Referer": "https://www.bilibili.com/",
         }
+        cookiefile = _resolve_bilibili_cookiefile()
+        if cookiefile:
+            opts["cookiefile"] = str(cookiefile)
     return opts
+
+
+def _print_bilibili_cookie_hint(url: str) -> None:
+    if not _is_bilibili_url(url):
+        return
+    cookiefile = _resolve_bilibili_cookiefile()
+    if cookiefile:
+        print(f"\n已加载 B 站 Cookie: {cookiefile.name}")
+        return
+    example = BASE_DIR / "bilibili_cookies.example.txt"
+    print(
+        f"\n提示: 未找到 {BILIBILI_COOKIES_FILE.name}，充电视频可能只能下载试看片段。"
+        f"\n      请复制 {example.name} 为 {BILIBILI_COOKIES_FILE.name} 并填入浏览器导出的 Cookie。"
+    )
 
 
 def _extract_info(url: str) -> Dict[str, Any]:
@@ -233,7 +264,7 @@ def _download(url: str, option: FormatOption) -> Path:
 
     ydl_opts: Dict[str, Any] = {
         **_base_ydl_opts(url),
-        "format": option.format_spec,
+        "format": _audio_format_spec(url) if option.audio_codec else option.format_spec,
         "outtmpl": outtmpl,
         "progress_hooks": [_make_progress_hook()],
     }
@@ -266,6 +297,7 @@ def main() -> None:
     print("=" * 56)
 
     url = _prompt_url()
+    _print_bilibili_cookie_hint(url)
     try:
         info = _extract_info(url)
     except Exception as exc:
