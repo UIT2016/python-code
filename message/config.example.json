@@ -1,9 +1,19 @@
 {
   "token": "",
   "cookie": "",
-  "api_key": "",
-  "api_url": "https://api.deepseek.com",
+  "llm_provider": "deepseek",
+  "llm": {
+    "deepseek": {
+      "api_key": "",
+      "api_url": "https://api.deepseek.com",
+      "model": "deepseek-v4-pro"
+    },
+    "qwen": {
+      "api_key": "",
+      "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "model": "qwen-plus"
+    }
+  },
   "msg_api_url": "https://mx2025.hhhuu.com/5/api/msg/list",
-  "model": "deepseek-v4-pro",
   "msg_pagesize": 30
 }

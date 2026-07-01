@@ -1,4 +1,4 @@
-from lite_agent_sdk.base import BaseSkill, SkillContext, create_llm_client
+from lite_agent_sdk.base import BaseSkill, SkillContext, create_llm_client, create_llm_client_from_cfg
 from lite_agent_sdk.pipeline import AnalysisOrchestratorAgent
 from lite_agent_sdk.skills import (
     DeduplicateSkill,
@@ -18,4 +18,5 @@ __all__ = [
     "SkillContext",
     "StatAggSkill",
     "create_llm_client",
+    "create_llm_client_from_cfg",
 ]

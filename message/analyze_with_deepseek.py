@@ -5,19 +5,16 @@ import sys
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-from config_loader import load_config
-from lite_agent_sdk import AnalysisOrchestratorAgent, SkillContext, create_llm_client
+from config_loader import SUPPORTED_LLM_PROVIDERS, load_config, resolve_llm_config
+from lite_agent_sdk import AnalysisOrchestratorAgent, SkillContext, create_llm_client_from_cfg
 
 BASE_DIR = Path(__file__).resolve().parent
 MESSAGE_DATA_DIR = BASE_DIR / "message_data"
 ANALYSIS_OUTPUT_DIR = BASE_DIR / "analysis_results"
 
 cfg = load_config(BASE_DIR)
-DEEPSEEK_API_KEY = cfg["api_key"]
-DEEPSEEK_API_BASE = cfg["api_url"]
-MODEL = cfg["model"]
 DEFAULT_BATCH_SIZE = 8000
 
 
@@ -33,7 +30,7 @@ def _serialize_hot_terms(ctx: SkillContext) -> list:
     return [asdict(item) for item in ctx.hot_terms]
 
 
-def save_results(date_str: str, ctx: SkillContext) -> tuple[Path, Path]:
+def save_results(date_str: str, ctx: SkillContext, llm_provider: str, llm_model: str) -> tuple[Path, Path]:
     ANALYSIS_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     report_file = ANALYSIS_OUTPUT_DIR / f"{date_str}_report.md"
     data_file = ANALYSIS_OUTPUT_DIR / f"{date_str}_pipeline.json"
@@ -42,6 +39,7 @@ def save_results(date_str: str, ctx: SkillContext) -> tuple[Path, Path]:
         f"# 聊天室热点分析报告\n\n"
         f"- 分析日期: {date_str}\n"
         f"- 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"- LLM: {llm_provider} / {llm_model}\n"
         f"- 聊天室: {ctx.source_data.get('room_count', 0)} 个\n"
         f"- 消息总数: {ctx.source_data.get('total_messages', 0)} 条\n"
         f"- 热点词条: {len(ctx.hot_terms)} 个\n\n"
@@ -52,6 +50,8 @@ def save_results(date_str: str, ctx: SkillContext) -> tuple[Path, Path]:
 
     pipeline_payload = {
         "date": date_str,
+        "llm_provider": llm_provider,
+        "llm_model": llm_model,
         "meta": ctx.meta,
         "hot_terms": _serialize_hot_terms(ctx),
         "batch_count": len(ctx.batches),
@@ -62,24 +62,28 @@ def save_results(date_str: str, ctx: SkillContext) -> tuple[Path, Path]:
     return report_file, data_file
 
 
-async def analyze_date(date_str: str, api_key: str, batch_size: int = DEFAULT_BATCH_SIZE) -> tuple[Path, Path]:
+async def analyze_date(
+    date_str: str,
+    provider: Optional[str] = None,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+) -> tuple[Path, Path]:
     data = load_messages_file(date_str)
+    llm_cfg = resolve_llm_config(cfg, provider=provider)
+    active_provider = llm_cfg["provider"]
+    active_model = llm_cfg["model"]
+
     print(
         f"已加载 {date_str}.json："
         f"{data.get('room_count', 0)} 个聊天室，"
         f"共 {data.get('total_messages', 0)} 条消息"
     )
+    print(f"使用 LLM: {active_provider} / {active_model}")
 
-    llm = create_llm_client(
-        model=MODEL,
-        api_key=api_key,
-        api_base=DEEPSEEK_API_BASE,
-        temperature=0.3,
-    )
+    llm = create_llm_client_from_cfg(cfg, provider=active_provider, temperature=0.3)
     ctx = SkillContext(date_str=date_str, source_data=data)
     agent = AnalysisOrchestratorAgent(llm, batch_size=batch_size)
     ctx = await agent.run(ctx)
-    return save_results(date_str, ctx)
+    return save_results(date_str, ctx, active_provider, active_model)
 
 
 def main():
@@ -96,6 +100,12 @@ def main():
         default=DEFAULT_BATCH_SIZE,
         help="FileSplitSkill 单批最大字符数（默认 8000）",
     )
+    parser.add_argument(
+        "--provider",
+        choices=SUPPORTED_LLM_PROVIDERS,
+        default=None,
+        help=f"LLM 提供商（默认读取 config.local.json 的 llm_provider，当前: {cfg['llm_provider']}）",
+    )
     args = parser.parse_args()
 
     try:
@@ -106,13 +116,16 @@ def main():
 
     try:
         report_file, data_file = asyncio.run(
-            analyze_date(args.date, DEEPSEEK_API_KEY, batch_size=max(1000, args.batch_size))
+            analyze_date(args.date, provider=args.provider, batch_size=max(1000, args.batch_size))
         )
-        print(f"\n分析完成！")
+        print("\n分析完成！")
         print(f"  报告: {report_file}")
         print(f"  结构化数据: {data_file}")
     except FileNotFoundError as e:
         print(f"错误: {e}")
+        sys.exit(1)
+    except ValueError as e:
+        print(f"配置错误: {e}")
         sys.exit(1)
 
 

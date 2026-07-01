@@ -53,11 +53,30 @@ def create_llm_client(
     api_base: str,
     temperature: float = 0.3,
 ) -> OpenAIClient:
+    """创建 OpenAI 兼容 LLM 客户端（DeepSeek / Qwen 等）。"""
     return OpenAIClient(
         model=model,
         api_key=api_key,
         api_base=api_base,
         llm_config=LLMConfig(temperature=temperature),
+    )
+
+
+def create_llm_client_from_cfg(cfg: Dict[str, Any], provider: Optional[str] = None, *, temperature: float = 0.3) -> OpenAIClient:
+    """根据 config_loader 返回的配置创建 LLM 客户端。"""
+    name = (provider or cfg.get("llm_provider") or "deepseek").strip().lower()
+    block = (cfg.get("llm") or {}).get(name)
+    if not block:
+        block = {
+            "api_key": cfg["api_key"],
+            "api_url": cfg["api_url"],
+            "model": cfg["model"],
+        }
+    return create_llm_client(
+        model=block["model"],
+        api_key=block["api_key"],
+        api_base=block["api_url"],
+        temperature=temperature,
     )
 
 

@@ -2,6 +2,18 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+LLM_PRESETS: Dict[str, Dict[str, str]] = {
+    "deepseek": {
+        "api_url": "https://api.deepseek.com",
+        "model": "deepseek-v4-pro",
+    },
+    "qwen": {
+        "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "model": "qwen-plus",
+    },
+}
+SUPPORTED_LLM_PROVIDERS = tuple(LLM_PRESETS.keys())
+
 
 def _read_json(path: Path) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
@@ -12,6 +24,54 @@ def _shallow_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, 
     out = dict(base)
     out.update(override)
     return out
+
+
+def _normalize_provider(name: Any) -> str:
+    provider = str(name or "deepseek").strip().lower()
+    if provider not in LLM_PRESETS:
+        raise ValueError(f"不支持的 llm_provider: {provider}，可选: {', '.join(SUPPORTED_LLM_PROVIDERS)}")
+    return provider
+
+
+def _provider_block(config: Dict[str, Any], provider: str) -> Dict[str, Any]:
+    preset = dict(LLM_PRESETS[provider])
+    nested = (config.get("llm") or {}).get(provider) or {}
+    if isinstance(nested, dict):
+        preset.update({k: v for k, v in nested.items() if v not in (None, "")})
+
+    if provider == "deepseek":
+        for key in ("api_key", "api_url", "model"):
+            legacy = config.get(key)
+            if legacy and not preset.get(key):
+                preset[key] = legacy
+    return preset
+
+
+def resolve_llm_config(config: Dict[str, Any], provider: Optional[str] = None) -> Dict[str, Any]:
+    """解析 LLM 配置，返回当前 provider 及 deepseek/qwen 两套完整参数。"""
+    active_provider = _normalize_provider(provider or config.get("llm_provider", "deepseek"))
+    providers: Dict[str, Dict[str, str]] = {}
+    for name in SUPPORTED_LLM_PROVIDERS:
+        block = _provider_block(config, name)
+        providers[name] = {
+            "api_key": str(block.get("api_key") or ""),
+            "api_url": str(block.get("api_url") or LLM_PRESETS[name]["api_url"]),
+            "model": str(block.get("model") or LLM_PRESETS[name]["model"]),
+        }
+
+    active = providers[active_provider]
+    if not active["api_key"]:
+        raise ValueError(
+            f"config.local.json 中需填写 {active_provider} 的 api_key"
+            f"（llm.{active_provider}.api_key 或 deepseek 旧字段 api_key）"
+        )
+    return {
+        "provider": active_provider,
+        "providers": providers,
+        "api_key": active["api_key"],
+        "api_url": active["api_url"],
+        "model": active["model"],
+    }
 
 
 def load_config(base_dir: Optional[Path] = None) -> Dict[str, Any]:
@@ -49,9 +109,7 @@ def load_config(base_dir: Optional[Path] = None) -> Dict[str, Any]:
             value = value.replace("{{COOKIE}}", str(config.get("cookie", "")))
         headers[key] = value
 
-    api_key = config.get("api_key")
-    if not api_key:
-        raise ValueError("config.local.json 中需填写 api_key")
+    llm = resolve_llm_config(config)
 
     def _clamp_msg_pagesize(raw: Any) -> int:
         try:
@@ -64,9 +122,11 @@ def load_config(base_dir: Optional[Path] = None) -> Dict[str, Any]:
 
     return {
         "headers": headers,
-        "api_key": api_key,
-        "api_url": config.get("api_url", "https://api.deepseek.com"),
-        "model": config.get("model", "deepseek-v4-pro"),
+        "llm_provider": llm["provider"],
+        "llm": llm["providers"],
+        "api_key": llm["api_key"],
+        "api_url": llm["api_url"],
+        "model": llm["model"],
         "msg_api_url": config.get("msg_api_url", "https://mx2025.hhhuu.com/5/api/msg/list"),
         "msg_pagesize": msg_pagesize,
         "token": config.get("token"),
@@ -81,5 +141,9 @@ def get_headers() -> Dict[str, Any]:
 load_headers = get_headers
 
 
-def get_api_key() -> Optional[str]:
-    return load_config()["api_key"]
+def get_api_key(provider: Optional[str] = None) -> Optional[str]:
+    cfg = load_config()
+    if provider:
+        name = _normalize_provider(provider)
+        return cfg["llm"][name]["api_key"]
+    return cfg["api_key"]
