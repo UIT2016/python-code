@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>视频下载 & 音频转写</title>
+  <style>
+    :root { --bg: #0f1419; --card: #1a2332; --text: #e7ecf3; --muted: #8b9cb3; --accent: #3d8bfd; --border: #2a3548; --accent2: #2d6a4f; --warn: #e8a87c; }
+    * { box-sizing: border-box; }
+    body { font-family: "Segoe UI", "PingFang SC", sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 1.5rem; line-height: 1.5; }
+    h1 { font-size: 1.35rem; font-weight: 600; margin: 0 0 1rem; }
+    h2 { font-size: 1.05rem; font-weight: 600; margin: 0 0 0.75rem; }
+    .wrap { max-width: 960px; margin: 0 auto; display: grid; gap: 1rem; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem; }
+    .row { margin-bottom: 1rem; }
+    .row:last-child { margin-bottom: 0; }
+    label.block { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 0.35rem; }
+    input[type="text"], input[type="url"], select {
+      background: var(--bg); color: var(--text); border: 1px solid var(--border);
+      border-radius: 6px; padding: 0.45rem 0.6rem; width: 100%;
+    }
+    .hint { font-size: 0.8rem; color: var(--muted); margin-top: 0.35rem; }
+    .submit { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 0.55rem 1.1rem; font-size: 0.92rem; cursor: pointer; margin-right: 0.5rem; }
+    .submit.secondary { background: var(--border); }
+    .submit.green { background: var(--accent2); }
+    .submit:disabled { opacity: 0.55; cursor: not-allowed; }
+    .submit:hover:not(:disabled) { filter: brightness(1.08); }
+    .mono { font-family: ui-monospace, monospace; font-size: 0.82rem; }
+    .formats, .audio-list { border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.75rem; max-height: 260px; overflow: auto; }
+    .fmt-line, .audio-line { display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0; border-bottom: 1px solid var(--border); }
+    .fmt-line:last-child, .audio-line:last-child { border-bottom: none; }
+    .check-line { display: flex; align-items: center; gap: 0.5rem; margin: 0.35rem 0; }
+    .check-line input { accent-color: var(--accent); }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem; }
+    .toolbar button { background: var(--border); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 0.35rem 0.75rem; cursor: pointer; font-size: 0.85rem; }
+    .toolbar button:hover { border-color: var(--accent); }
+    .progress-bar { height: 8px; background: var(--bg); border-radius: 999px; overflow: hidden; border: 1px solid var(--border); margin-top: 0.35rem; }
+    .progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), #6ea8fe); transition: width 0.25s ease; }
+    .progress-fill.done { background: linear-gradient(90deg, var(--accent2), #40916c); }
+    .progress-fill.error { background: linear-gradient(90deg, #c0392b, #e74c3c); }
+    .hidden { display: none !important; }
+    .divider { height: 1px; background: var(--border); margin: 0.75rem 0; }
+    .task-item { border: 1px solid var(--border); border-radius: 8px; padding: 0.65rem 0.85rem; margin-bottom: 0.6rem; background: var(--bg); }
+    .task-item:last-child { margin-bottom: 0; }
+    .task-head { display: flex; justify-content: space-between; gap: 0.5rem; font-size: 0.88rem; }
+    .task-type { color: var(--muted); font-size: 0.78rem; }
+    .task-meta { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--muted); margin-top: 0.25rem; }
+    .task-result { font-size: 0.82rem; margin-top: 0.35rem; color: var(--accent2); }
+    .task-result.err { color: #e74c3c; }
+    .status-badge { font-size: 0.75rem; padding: 0.1rem 0.45rem; border-radius: 4px; background: var(--border); }
+    .status-badge.running { color: var(--accent); }
+    .status-badge.done { color: var(--accent2); }
+    .status-badge.error { color: #e74c3c; }
+    .toast { padding: 0.55rem 0.75rem; border-radius: 8px; margin-top: 0.5rem; font-size: 0.85rem; }
+    .toast.err { background: #3d1f24; border: 1px solid #8b3a44; }
+    .toast.ok { background: #1a2e24; border: 1px solid #2d6a4f; }
+    textarea {
+      background: var(--bg); color: var(--text); border: 1px solid var(--border);
+      border-radius: 6px; padding: 0.55rem 0.65rem; width: 100%; min-height: 120px;
+      font-family: ui-monospace, monospace; font-size: 0.82rem; resize: vertical;
+    }
+    .preview-box {
+      border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem;
+      max-height: 320px; overflow: auto; background: var(--bg); font-size: 0.85rem;
+      white-space: pre-wrap;
+    }
+    .rubric-meta { font-size: 0.82rem; color: var(--muted); margin-bottom: 0.5rem; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>视频下载 & 音频转写</h1>
+      <p class="hint">各操作互不阻塞：转写进行中也可解析/下载下一个视频；所有后台任务在下方「任务中心」统一展示，页面不会刷新。</p>
+    </div>
+
+    <div class="card">
+      <h2>任务中心</h2>
+      <div id="task-list"><p class="hint">暂无进行中的任务</p></div>
+    </div>
+
+    <div class="card">
+      <h2>① 视频下载（yt-dlp）</h2>
+      <div class="row">
+        <label class="block" for="url">视频 URL</label>
+        <input type="url" id="url" placeholder="https://www.bilibili.com/video/BV..." />
+      </div>
+      <div class="row">
+        <label class="block" for="cookie_file">B 站 Cookie 文件（相对 tool 目录）</label>
+        <input type="text" id="cookie_file" value="{{ default_cookie }}" />
+      </div>
+      <button type="button" class="submit secondary" id="btn-parse">解析 URL</button>
+      <div id="parse-toast" class="hidden"></div>
+
+      <div id="parse-panel" class="hidden">
+        <div class="divider"></div>
+        <p><strong id="parse-title"></strong> <span class="hint" id="parse-duration"></span></p>
+        <p class="hint hidden" id="parse-cookie-warn" style="color:var(--warn);">未找到 Cookie 文件，充电视频可能只能下载试看片段。</p>
+        <div class="row">
+          <span class="block">选择下载格式</span>
+          <div class="formats" id="format-list"></div>
+        </div>
+        <button type="button" class="submit" id="btn-download">开始下载</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>② 音频转写（Qwen3 ASR）</h2>
+      <div class="toolbar">
+        <button type="button" id="btn-audio-all">全选</button>
+        <button type="button" id="btn-audio-none">全不选</button>
+        <button type="button" id="btn-audio-refresh">刷新列表</button>
+      </div>
+      <div class="row">
+        <span class="block">选择 download 目录中的音频（可多选批量转写）</span>
+        <div class="audio-list" id="audio-list">
+          {% for f in audio_files %}
+          <label class="audio-line">
+            <input type="checkbox" name="audio_file" value="{{ f.path }}" />
+            <span>{{ f.name }}</span>
+          </label>
+          {% endfor %}
+          {% if not audio_files %}
+          <p class="hint">暂无音频，请先在上方下载 MP3/M4A。</p>
+          {% endif %}
+        </div>
+      </div>
+      <div class="row">
+        <span class="block">输出格式</span>
+        <label class="check-line"><input type="checkbox" checked disabled /> 全文本 <span class="mono">.txt</span>（始终生成）</label>
+        <label class="check-line"><input type="checkbox" id="include_timed" /> 带时间轴 <span class="mono">.timed.txt</span></label>
+        <label class="check-line"><input type="checkbox" id="include_json" /> JSON <span class="mono">.json</span></label>
+      </div>
+      <button type="button" class="submit green" id="btn-transcribe">开始转写</button>
+      <div id="transcribe-toast" class="hidden"></div>
+    </div>
+
+    <div class="card">
+      <h2>③ 转录精炼（三 Agent 审计）</h2>
+      <p class="hint">Agent1 提取投资精华 → Agent2 按规则审计 → 未达标则打回修订（最多 3 轮）。Agent3 维护审计规则（知识库 + 手工规则）。</p>
+      <div class="row">
+        <span class="block">LLM Provider</span>
+        <select id="refine_provider">
+          <option value="">默认（config.local.json）</option>
+          <option value="deepseek">deepseek</option>
+          <option value="qwen">qwen</option>
+        </select>
+      </div>
+      <div class="rubric-meta" id="rubric-meta">审计规则：加载中...</div>
+      <div class="toolbar">
+        <button type="button" id="btn-rubric-refresh">刷新审计规则（Agent3）</button>
+        <button type="button" id="btn-transcript-refresh">刷新转录列表</button>
+        <button type="button" id="btn-processed-refresh">刷新精炼结果</button>
+      </div>
+      <div class="row">
+        <span class="block">手工规则 manual_overrides.yaml</span>
+        <textarea id="manual-rules" placeholder="编辑后保存，再点击「刷新审计规则」"></textarea>
+        <button type="button" class="submit secondary" id="btn-manual-save" style="margin-top:0.5rem;">保存手工规则</button>
+      </div>
+      <div class="divider"></div>
+      <div class="toolbar">
+        <button type="button" id="btn-transcript-all">全选</button>
+        <button type="button" id="btn-transcript-none">全不选</button>
+      </div>
+      <div class="row">
+        <span class="block">选择 transcripts 目录中的 .txt（可多选）</span>
+        <div class="audio-list" id="transcript-list">
+          {% for f in transcript_files %}
+          <label class="audio-line">
+            <input type="checkbox" name="transcript_file" value="{{ f.path }}" />
+            <span>{{ f.name }}</span>
+          </label>
+          {% endfor %}
+          {% if not transcript_files %}
+          <p class="hint">暂无转录文件，请先在上方完成音频转写。</p>
+          {% endif %}
+        </div>
+      </div>
+      <button type="button" class="submit" id="btn-refine">开始精炼</button>
+      <div id="refine-toast" class="hidden"></div>
+      <div class="divider"></div>
+      <div class="row">
+        <span class="block">精炼结果预览</span>
+        <select id="processed-select"><option value="">— 选择已精炼文件 —</option></select>
+        <div class="preview-box hidden" id="processed-preview"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API = {
+      parse: {{ url_for('api_parse') | tojson }},
+      download: {{ url_for('api_download') | tojson }},
+      transcribe: {{ url_for('api_transcribe') | tojson }},
+      audioFiles: {{ url_for('api_audio_files') | tojson }},
+      task: (id) => {{ url_for('api_task', task_id='__ID__') | tojson }}.replace("__ID__", encodeURIComponent(id)),
+      transcriptFiles: {{ url_for('api_transcript_files') | tojson }},
+      transcriptRubric: {{ url_for('api_transcript_rubric') | tojson }},
+      transcriptManualRules: {{ url_for('api_transcript_manual_rules_get') | tojson }},
+      transcriptManualRulesSave: {{ url_for('api_transcript_manual_rules_save') | tojson }},
+      transcriptRefreshRules: {{ url_for('api_transcript_refresh_rules') | tojson }},
+      transcriptRefine: {{ url_for('api_transcript_refine') | tojson }},
+      transcriptProcessed: {{ url_for('api_transcript_processed') | tojson }},
+      transcriptProcessedContent: (name) => {{ url_for('api_transcript_processed_content', name='__NAME__') | tojson }}.replace("__NAME__", encodeURIComponent(name)),
+    };
+    const TASK_STORAGE_KEY = "tool_task_ids";
+    const TYPE_LABEL = {
+      download: "下载", transcribe: "转写", transcribe_batch: "批量转写",
+      refine: "精炼", refine_batch: "批量精炼", refresh_rules: "刷新规则",
+    };
+
+    let parseResult = null;
+    const trackedTasks = new Map();
+    const pollingTasks = new Set();
+
+    function showToast(elId, msg, ok) {
+      const el = document.getElementById(elId);
+      el.textContent = msg;
+      el.className = `toast ${ok ? "ok" : "err"}`;
+      el.classList.remove("hidden");
+    }
+
+    async function parseJsonResponse(resp) {
+      const text = await resp.text();
+      try { return JSON.parse(text); }
+      catch {
+        const hint = text.trimStart().startsWith("<!") ? "（请确认 python tool/app.py 端口 5001）" : "";
+        throw new Error(`服务器返回非 JSON（HTTP ${resp.status}）${hint}`);
+      }
+    }
+
+    function saveTaskIds() {
+      sessionStorage.setItem(TASK_STORAGE_KEY, JSON.stringify([...trackedTasks.keys()]));
+    }
+
+    function formatTaskResult(task) {
+      if (task.status === "error") return task.error || task.message || "失败";
+      if (task.type === "download" && task.result) return `已保存 tool/${task.result.path}`;
+      if (task.result && task.result.items) {
+        if (task.type === "refine" || task.type === "refine_batch") {
+          return task.result.items.map((it) => `${it.source_file} → ${it.essence}（${it.passed ? "通过" : "未通过"} ${it.score ?? "-"}分）`).join("；");
+        }
+        return task.result.items.map((it) => `${it.file_name} → ${it.txt}（${it.elapsed_sec}s）`).join("；");
+      }
+      if (task.type === "refresh_rules" && task.result) {
+        return `规则版本 ${task.result.version}`;
+      }
+      return task.message || "";
+    }
+
+    function renderTaskCenter() {
+      const box = document.getElementById("task-list");
+      if (!trackedTasks.size) {
+        box.innerHTML = '<p class="hint">暂无进行中的任务</p>';
+        return;
+      }
+      const items = [...trackedTasks.values()].sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+      box.innerHTML = items.map((t) => {
+        const fillClass = t.status === "done" ? "done" : t.status === "error" ? "error" : "";
+        const resultHtml = t.status !== "running"
+          ? `<div class="task-result ${t.status === "error" ? "err" : ""}">${formatTaskResult(t)}</div>` : "";
+        return `
+          <div class="task-item" data-task-id="${t.id}">
+            <div class="task-head">
+              <div><span class="task-type">${TYPE_LABEL[t.type] || t.type}</span> · ${t.label || t.id.slice(0, 8)}</div>
+              <span class="status-badge ${t.status}">${t.status === "running" ? "进行中" : t.status === "done" ? "完成" : "失败"}</span>
+            </div>
+            <div class="progress-bar"><div class="progress-fill ${fillClass}" style="width:${t.progress || 0}%"></div></div>
+            <div class="task-meta"><span>${t.message || ""}</span><span>${t.progress || 0}% · ${t.elapsed_sec || 0}s</span></div>
+            ${resultHtml}
+          </div>`;
+      }).join("");
+    }
+
+    function trackTask(taskId, type, label) {
+      trackedTasks.set(taskId, {
+        id: taskId, type, label, status: "running", progress: 0,
+        message: "准备中...", elapsed_sec: 0, startedAt: Date.now(),
+      });
+      saveTaskIds();
+      renderTaskCenter();
+      startPolling(taskId);
+    }
+
+    async function startPolling(taskId) {
+      if (pollingTasks.has(taskId)) return;
+      pollingTasks.add(taskId);
+      while (true) {
+        try {
+          const resp = await fetch(API.task(taskId));
+          const task = await parseJsonResponse(resp);
+          if (!resp.ok) {
+            const local = trackedTasks.get(taskId);
+            if (local) {
+              local.status = "error";
+              local.message = task.error || "任务丢失";
+              renderTaskCenter();
+            }
+            break;
+          }
+          const local = trackedTasks.get(taskId);
+          if (local) {
+            Object.assign(local, {
+              status: task.status,
+              progress: task.progress,
+              message: task.message,
+              elapsed_sec: task.elapsed_sec,
+              result: task.result,
+              error: task.error,
+              type: task.type,
+              label: task.label || local.label,
+            });
+            renderTaskCenter();
+          }
+          if (task.status === "done") {
+            if (task.type === "download") refreshAudioList();
+            if (task.type === "refine" || task.type === "refine_batch" || task.type === "refresh_rules") {
+              loadRubric();
+              refreshProcessedList();
+            }
+            break;
+          }
+          if (task.status === "error") break;
+        } catch (e) {
+          const local = trackedTasks.get(taskId);
+          if (local) { local.status = "error"; local.message = e.message; renderTaskCenter(); }
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 800));
+      }
+      pollingTasks.delete(taskId);
+    }
+
+    function restoreTasks() {
+      try {
+        const ids = JSON.parse(sessionStorage.getItem(TASK_STORAGE_KEY) || "[]");
+        ids.forEach((id) => {
+          if (!trackedTasks.has(id)) {
+            trackedTasks.set(id, { id, type: "unknown", label: id.slice(0, 8), status: "running", progress: 0, message: "恢复跟踪...", elapsed_sec: 0, startedAt: 0 });
+            startPolling(id);
+          }
+        });
+        renderTaskCenter();
+      } catch (_) {}
+    }
+
+    function renderFormats(options) {
+      const box = document.getElementById("format-list");
+      box.innerHTML = options.map((opt, i) => `
+        <label class="fmt-line">
+          <input type="radio" name="format_index" value="${opt.index}" ${i === 0 ? "checked" : ""} />
+          [${opt.index}] ${opt.label}
+        </label>`).join("");
+    }
+
+    document.getElementById("btn-parse").onclick = async () => {
+      const url = document.getElementById("url").value.trim();
+      const cookie_file = document.getElementById("cookie_file").value.trim();
+      if (!url) return showToast("parse-toast", "请输入视频 URL", false);
+      const btn = document.getElementById("btn-parse");
+      btn.disabled = true;
+      try {
+        const resp = await fetch(API.parse, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url, cookie_file }),
+        });
+        const data = await parseJsonResponse(resp);
+        if (!resp.ok) throw new Error(data.error || "解析失败");
+        parseResult = { url, cookie_file, ...data };
+        document.getElementById("parse-title").textContent = data.title;
+        const dur = data.duration ? ` · 时长 ${String(Math.floor(data.duration / 60)).padStart(2,"0")}:${String(data.duration % 60).padStart(2,"0")}` : "";
+        document.getElementById("parse-duration").textContent = dur;
+        document.getElementById("parse-cookie-warn").classList.toggle("hidden", data.cookie_ok);
+        renderFormats(data.options);
+        document.getElementById("parse-panel").classList.remove("hidden");
+        showToast("parse-toast", "解析成功，可选择格式并开始下载（不影响进行中的转写任务）", true);
+      } catch (e) {
+        showToast("parse-toast", e.message, false);
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
+    document.getElementById("btn-download").onclick = async () => {
+      if (!parseResult) return alert("请先解析 URL");
+      const formatEl = document.querySelector('input[name="format_index"]:checked');
+      if (!formatEl) return alert("请选择下载格式");
+      const btn = document.getElementById("btn-download");
+      btn.disabled = true;
+      try {
+        const resp = await fetch(API.download, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url: parseResult.url,
+            cookie_file: parseResult.cookie_file,
+            format_index: parseInt(formatEl.value, 10),
+            label: parseResult.title,
+          }),
+        });
+        const data = await parseJsonResponse(resp);
+        if (!resp.ok) throw new Error(data.error || "启动失败");
+        trackTask(data.task_id, "download", parseResult.title);
+        showToast("parse-toast", "下载任务已加入任务中心", true);
+      } catch (e) {
+        showToast("parse-toast", e.message, false);
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
+    function getSelectedAudio() {
+      return [...document.querySelectorAll('input[name="audio_file"]:checked')].map((c) => c.value);
+    }
+
+    function getSelectedAudioNames() {
+      return [...document.querySelectorAll('input[name="audio_file"]:checked')].map((c) => c.nextElementSibling.textContent);
+    }
+
+    async function refreshAudioList() {
+      const resp = await fetch(API.audioFiles);
+      const files = await parseJsonResponse(resp);
+      const list = document.getElementById("audio-list");
+      if (!files.length) {
+        list.innerHTML = '<p class="hint">暂无音频，请先在上方下载 MP3/M4A。</p>';
+        return;
+      }
+      list.innerHTML = files.map((f) => `
+        <label class="audio-line">
+          <input type="checkbox" name="audio_file" value="${f.path}" />
+          <span>${f.name}</span>
+        </label>`).join("");
+    }
+
+    document.getElementById("btn-audio-all").onclick = () => document.querySelectorAll('input[name="audio_file"]').forEach((c) => (c.checked = true));
+    document.getElementById("btn-audio-none").onclick = () => document.querySelectorAll('input[name="audio_file"]').forEach((c) => (c.checked = false));
+    document.getElementById("btn-audio-refresh").onclick = refreshAudioList;
+
+    document.getElementById("btn-transcribe").onclick = async () => {
+      const selected = getSelectedAudio();
+      const names = getSelectedAudioNames();
+      if (!selected.length) return showToast("transcribe-toast", "请至少选择一个音频文件", false);
+      const btn = document.getElementById("btn-transcribe");
+      btn.disabled = true;
+      try {
+        const label = selected.length === 1 ? names[0] : `批量转写 ${selected.length} 个文件`;
+        const resp = await fetch(API.transcribe, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            audio_files: selected,
+            include_timed: document.getElementById("include_timed").checked,
+            include_json: document.getElementById("include_json").checked,
+            label,
+          }),
+        });
+        const data = await parseJsonResponse(resp);
+        if (!resp.ok) throw new Error(data.error || "启动失败");
+        trackTask(data.task_id, selected.length > 1 ? "transcribe_batch" : "transcribe", label);
+        showToast("transcribe-toast", "转写任务已加入任务中心，可继续操作下载", true);
+      } catch (e) {
+        showToast("transcribe-toast", e.message, false);
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
+    restoreTasks();
+
+    async function loadRubric() {
+      try {
+        const resp = await fetch(API.transcriptRubric);
+        const rubric = await parseJsonResponse(resp);
+        document.getElementById("rubric-meta").textContent =
+          `审计规则版本: ${rubric.version || "未知"} · 通过阈值: ${rubric.pass_threshold ?? 85} · 维度: ${(rubric.dimensions || []).length}`;
+      } catch (e) {
+        document.getElementById("rubric-meta").textContent = `审计规则加载失败: ${e.message}`;
+      }
+    }
+
+    async function loadManualRules() {
+      const resp = await fetch(API.transcriptManualRules);
+      const data = await parseJsonResponse(resp);
+      document.getElementById("manual-rules").value = data.content || "";
+    }
+
+    async function refreshTranscriptList() {
+      const resp = await fetch(API.transcriptFiles);
+      const files = await parseJsonResponse(resp);
+      const list = document.getElementById("transcript-list");
+      if (!files.length) {
+        list.innerHTML = '<p class="hint">暂无转录文件，请先在上方完成音频转写。</p>';
+        return;
+      }
+      list.innerHTML = files.map((f) => `
+        <label class="audio-line">
+          <input type="checkbox" name="transcript_file" value="${f.path}" />
+          <span>${f.name}</span>
+        </label>`).join("");
+    }
+
+    async function refreshProcessedList() {
+      const resp = await fetch(API.transcriptProcessed);
+      const items = await parseJsonResponse(resp);
+      const sel = document.getElementById("processed-select");
+      sel.innerHTML = '<option value="">— 选择已精炼文件 —</option>' +
+        items.map((it) => `<option value="${it.essence}">${it.stem}${it.has_failed ? " (未通过)" : ""}</option>`).join("");
+    }
+
+    document.getElementById("processed-select").onchange = async (e) => {
+      const name = e.target.value;
+      const box = document.getElementById("processed-preview");
+      if (!name) { box.classList.add("hidden"); return; }
+      const resp = await fetch(API.transcriptProcessedContent(name));
+      const data = await parseJsonResponse(resp);
+      box.textContent = data.content || "";
+      box.classList.remove("hidden");
+    };
+
+    document.getElementById("btn-manual-save").onclick = async () => {
+      const content = document.getElementById("manual-rules").value;
+      const resp = await fetch(API.transcriptManualRulesSave, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content }),
+      });
+      const data = await parseJsonResponse(resp);
+      if (!resp.ok) return showToast("refine-toast", data.error || "保存失败", false);
+      showToast("refine-toast", "手工规则已保存，建议点击「刷新审计规则」", true);
+    };
+
+    document.getElementById("btn-rubric-refresh").onclick = async () => {
+      const provider = document.getElementById("refine_provider").value;
+      const resp = await fetch(API.transcriptRefreshRules, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider }),
+      });
+      const data = await parseJsonResponse(resp);
+      if (!resp.ok) return showToast("refine-toast", data.error || "启动失败", false);
+      trackTask(data.task_id, "refresh_rules", "刷新审计规则");
+      showToast("refine-toast", "Agent3 规则刷新任务已加入任务中心", true);
+    };
+
+    document.getElementById("btn-transcript-all").onclick = () =>
+      document.querySelectorAll('input[name="transcript_file"]').forEach((c) => (c.checked = true));
+    document.getElementById("btn-transcript-none").onclick = () =>
+      document.querySelectorAll('input[name="transcript_file"]').forEach((c) => (c.checked = false));
+    document.getElementById("btn-transcript-refresh").onclick = refreshTranscriptList;
+    document.getElementById("btn-processed-refresh").onclick = refreshProcessedList;
+
+    document.getElementById("btn-refine").onclick = async () => {
+      const selected = [...document.querySelectorAll('input[name="transcript_file"]:checked')].map((c) => c.value);
+      if (!selected.length) return showToast("refine-toast", "请至少选择一个转录文件", false);
+      const btn = document.getElementById("btn-refine");
+      btn.disabled = true;
+      try {
+        const names = [...document.querySelectorAll('input[name="transcript_file"]:checked')].map((c) => c.nextElementSibling.textContent);
+        const label = selected.length === 1 ? names[0] : `批量精炼 ${selected.length} 个文件`;
+        const resp = await fetch(API.transcriptRefine, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            transcript_files: selected,
+            provider: document.getElementById("refine_provider").value,
+            label,
+          }),
+        });
+        const data = await parseJsonResponse(resp);
+        if (!resp.ok) throw new Error(data.error || "启动失败");
+        trackTask(data.task_id, selected.length > 1 ? "refine_batch" : "refine", label);
+        showToast("refine-toast", "精炼任务已加入任务中心", true);
+      } catch (e) {
+        showToast("refine-toast", e.message, false);
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
+    loadRubric();
+    loadManualRules();
+    refreshProcessedList();
+  </script>
+</body>
+</html>

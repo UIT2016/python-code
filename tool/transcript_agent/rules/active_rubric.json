@@ -1,0 +1,61 @@
+{
+  "version": "base-template",
+  "pass_threshold": 85,
+  "min_fidelity": 16,
+  "dimensions": [
+    {
+      "id": "fidelity",
+      "weight": 20,
+      "label": "忠实原文",
+      "checks": [
+        "每条 insight 必须有 evidence_quotes",
+        "不得编造原文未出现的个股、数据、结论"
+      ]
+    },
+    {
+      "id": "investment_value",
+      "weight": 20,
+      "label": "投资价值",
+      "checks": [
+        "保留定性投资框架与因果链",
+        "保留板块/行业判断与案例"
+      ]
+    },
+    {
+      "id": "structure",
+      "weight": 20,
+      "label": "结构完整",
+      "checks": [
+        "core_thesis 清晰且非空",
+        "framework_tags 反映视频所属框架"
+      ]
+    },
+    {
+      "id": "actionability",
+      "weight": 20,
+      "label": "可行动性",
+      "checks": [
+        "关键策略观点附带可操作建议"
+      ]
+    },
+    {
+      "id": "noise_removal",
+      "weight": 20,
+      "label": "噪音剔除",
+      "checks": [
+        "剔除 B 站口播寒暄、求关注",
+        "剔除重复口癖与无关闲聊"
+      ]
+    }
+  ],
+  "forbidden_patterns": ["必涨", "稳赚", "神秘代码"],
+  "required_fields": ["core_thesis", "framework_tags", "insights"],
+  "manual_must": [
+    "必须保留定性分析逻辑链，不能只留结论",
+    "个股/板块案例必须附带原文 evidence_quotes"
+  ],
+  "manual_must_not": [
+    "不得添加原文未提及的股票代码或具体价位",
+    "不得将 UP 主口播玩笑话当作投资建议"
+  ]
+}

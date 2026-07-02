@@ -1,0 +1,49 @@
+pass_threshold: 85
+min_fidelity: 16
+
+dimensions:
+  - id: fidelity
+    weight: 20
+    label: 忠实原文
+    checks:
+      - 每条 insight 必须有 evidence_quotes
+      - 不得编造原文未出现的个股、数据、结论
+      - 引用句必须能在转写稿中找到
+  - id: investment_value
+    weight: 20
+    label: 投资价值
+    checks:
+      - 保留定性投资框架与因果链
+      - 保留板块/行业判断与案例
+      - 保留现象级事件、拐点信号等关键概念
+  - id: structure
+    weight: 20
+    label: 结构完整
+    checks:
+      - core_thesis 清晰且非空
+      - framework_tags 反映视频所属框架
+      - insights 按 category 合理分类
+  - id: actionability
+    weight: 20
+    label: 可行动性
+    checks:
+      - 关键策略观点附带可操作建议
+      - 风险提示明确
+  - id: noise_removal
+    weight: 20
+    label: 噪音剔除
+    checks:
+      - 剔除 B 站口播寒暄、求关注
+      - 剔除重复口癖与无关闲聊
+      - 剔除纯情绪宣泄无论点内容
+
+forbidden_patterns:
+  - 必涨
+  - 稳赚
+  - 神秘代码
+  - 内幕消息
+
+required_fields:
+  - core_thesis
+  - framework_tags
+  - insights

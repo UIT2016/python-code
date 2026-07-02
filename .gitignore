@@ -64,3 +64,5 @@ tool/bilibili_cookies.local.txt
 tool/*cookies*.txt
 !tool/bilibili_cookies.example.txt
 tool/transcripts.zip
+tool/transcript_agent/processed/
+tool/transcript_agent/rules/versions/

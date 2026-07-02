@@ -81,10 +81,29 @@ def create_llm_client_from_cfg(cfg: Dict[str, Any], provider: Optional[str] = No
 
 
 async def llm_chat(client: OpenAIClient, system: str, user: str) -> str:
+    """纯文本对话，绕过 lite_agent.completion 默认的 tool_choice（DeepSeek/Qwen 无 tools 时会 400）。"""
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
-    resp = await client.completion(messages, streaming=False)
+    params: Dict[str, Any] = {
+        "model": client.model,
+        "messages": messages,
+        "stream": False,
+    }
+    llm_config = client.llm_config
+    if llm_config.temperature is not None:
+        params["temperature"] = llm_config.temperature
+    if llm_config.max_tokens is not None:
+        params["max_tokens"] = llm_config.max_tokens
+    if llm_config.top_p is not None:
+        params["top_p"] = llm_config.top_p
+    if llm_config.frequency_penalty is not None:
+        params["frequency_penalty"] = llm_config.frequency_penalty
+    if llm_config.presence_penalty is not None:
+        params["presence_penalty"] = llm_config.presence_penalty
+    if llm_config.stop is not None:
+        params["stop"] = llm_config.stop
+    resp = await client._client.chat.completions.create(**params)
     content = resp.choices[0].message.content
     return content or ""
