@@ -229,6 +229,7 @@ def _run_logic_analyze_task(
     context: str,
     subject_type: str,
     provider: str,
+    deep_research: bool,
 ) -> None:
     updater = task_store.make_updater(task_id)
     try:
@@ -242,15 +243,20 @@ def _run_logic_analyze_task(
                 query,
                 subject_type=subject_type,
                 context=context,
+                deep_research=deep_research,
                 on_progress=prog,
             )
 
         result = asyncio.run(_run())
+        mode = result.get("research_mode") or "wanxing"
         task_store.update(
             task_id,
             status="done",
             progress=100,
-            message=f"分析完成: {result.get('selected_logic_id') or '未命中'} ({result.get('selected_score', 0)}分)",
+            message=(
+                f"分析完成 [{mode}]: {result.get('selected_logic_id') or '未命中'} "
+                f"({result.get('selected_score', 0)}分)"
+            ),
             result=result,
         )
     except Exception as exc:
@@ -433,11 +439,12 @@ def create_app() -> Flask:
         context = (data.get("context") or "").strip()
         subject_type = (data.get("subject_type") or "auto").strip()
         provider = (data.get("provider") or "").strip()
+        deep_research = bool(data.get("deep_research"))
         label = query[:40]
-        task_id = task_store.create("logic_analyze", meta={"label": label})
+        task_id = task_store.create("logic_analyze", meta={"label": label, "deep_research": deep_research})
         threading.Thread(
             target=_run_logic_analyze_task,
-            args=(task_id, query, context, subject_type, provider),
+            args=(task_id, query, context, subject_type, provider, deep_research),
             daemon=True,
         ).start()
         return jsonify({"task_id": task_id})

@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 TOOL_DIR = Path(__file__).resolve().parent
 EXAMPLE_PATH = TOOL_DIR / "wind.example.json"
@@ -29,3 +29,8 @@ def load_wind_config() -> Dict[str, Any]:
     if embed_env and not cfg.get("embedding_api_key"):
         cfg["embedding_api_key"] = embed_env
     return cfg
+
+
+def save_wind_response_enabled(cfg: Optional[Dict[str, Any]] = None) -> bool:
+    cfg = cfg or load_wind_config()
+    return bool(cfg.get("save_wind_response", False))

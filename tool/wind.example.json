@@ -1,10 +1,13 @@
 {
   "wind_api_key": "",
-  "wind_api_base": "https://aifinmarket.wind.com.cn",
-  "wind_mcp_path": "/mcp/v1/tools/call",
+  "wind_alice_api_url": "https://mcp.wind.com.cn/skills/alice",
+  "wind_alice_default_skill": "Company One-Page Investment Memo",
+  "wind_alice_timeout_sec": 600,
   "embedding_model": "text-embedding-v3",
   "embedding_api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
   "embedding_api_key": "",
+  "embedding_batch_size": 10,
   "match_top_k": 10,
-  "match_threshold": 70
+  "match_threshold": 70,
+  "save_wind_response": true
 }

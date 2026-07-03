@@ -207,8 +207,8 @@
       </div>
 
       <div id="panel-logic" class="tab-panel">
-      <h2>逻辑分析（查询 → Wind → 匹配 → 回答）</h2>
-      <p class="hint">输入个股/板块，Wind AIFin 取数 + logic_cards 向量检索 + LLM 重排，按命中框架生成分析报告。需配置 tool/wind.local.json 与 embedding API Key。</p>
+      <h2>逻辑分析（查询 → 万行取数 → 匹配 → 回答）</h2>
+      <p class="hint">默认使用万行一言 MCP 取数 + logic_cards 向量检索 + LLM 重排。需配置 tool/wanxing.local.json 与 embedding API Key（wind.local.json）。勾选深度调研时将改用 Wind Alice（需 wind_api_key）。</p>
       <div class="rubric-meta" id="logic-registry-meta">逻辑库：加载中...</div>
       <div class="toolbar">
         <button type="button" id="btn-logic-rebuild-index">重建 logic_cards 索引</button>
@@ -235,6 +235,12 @@
           <option value="deepseek">deepseek</option>
           <option value="qwen">qwen</option>
         </select>
+      </div>
+      <div class="row">
+        <label class="block">
+          <input type="checkbox" id="logic_deep_research" />
+          深度调研（Wind Alice，约需数分钟）
+        </label>
       </div>
       <button type="button" class="submit green" id="btn-logic-analyze">开始逻辑分析</button>
       <div id="logic-toast" class="hidden"></div>
@@ -350,7 +356,8 @@
         return `${task.result.card_count || 0} 张卡，embedding ${task.result.version || ""}`;
       }
       if (task.type === "logic_analyze" && task.result) {
-        return `${task.result.analysis} → ${task.result.selected_logic_id || "未命中"} (${task.result.selected_score ?? "-"}分)`;
+        const mode = task.result.research_mode || "wanxing";
+        return `[${mode}] ${task.result.analysis} → ${task.result.selected_logic_id || "未命中"} (${task.result.selected_score ?? "-"}分)`;
       }
       return task.message || "";
     }
@@ -708,7 +715,7 @@
       const items = await parseJsonResponse(resp);
       const sel = document.getElementById("logic-result-select");
       sel.innerHTML = '<option value="">— 选择分析报告 —</option>' +
-        items.map((it) => `<option value="${it.analysis}">${it.stem}</option>`).join("");
+        items.map((it) => `<option value="${it.analysis}">${it.label || it.stem}</option>`).join("");
     }
 
     document.getElementById("logic-result-select").onchange = async (e) => {
@@ -746,6 +753,7 @@
             context: document.getElementById("logic_context").value.trim(),
             subject_type: document.getElementById("logic_subject_type").value,
             provider: document.getElementById("logic_provider").value,
+            deep_research: document.getElementById("logic_deep_research").checked,
           }),
         });
         const data = await parseJsonResponse(resp);

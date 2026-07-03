@@ -12,6 +12,8 @@ from transcript_agent.query.card_registry import load_registry_cards, save_regis
 
 EMBED_MANIFEST = ANALYSIS_RESULTS_DIR / "embeddings_manifest.json"
 EMBED_VECTORS = ANALYSIS_RESULTS_DIR / "embeddings.npy"
+# DashScope text-embedding-v4 单次 input 条数上限为 10（v3 为 20，取更保守值）
+EMBED_BATCH_SIZE = 10
 
 
 def _load_wind_embed_config() -> Dict[str, Any]:
@@ -34,6 +36,14 @@ def embed_texts(texts: List[str], cfg: Optional[Dict[str, Any]] = None) -> List[
     if not texts:
         return []
     cfg = cfg or _load_wind_embed_config()
+    batch_size = min(max(1, int(cfg.get("embedding_batch_size") or EMBED_BATCH_SIZE)), EMBED_BATCH_SIZE)
+    vectors: List[List[float]] = []
+    for start in range(0, len(texts), batch_size):
+        vectors.extend(_embed_texts_batch(texts[start : start + batch_size], cfg))
+    return vectors
+
+
+def _embed_texts_batch(texts: List[str], cfg: Dict[str, Any]) -> List[List[float]]:
     api_key = _resolve_embedding_key(cfg)
     if not api_key:
         raise ValueError("缺少 embedding API Key，请在 tool/wind.local.json 或 message/config.local.json 配置")

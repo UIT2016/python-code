@@ -11,7 +11,7 @@ from transcript_agent.query.card_registry import card_by_id
 from transcript_agent.query.embed_index import EmbedIndex
 from transcript_agent.query.models import FactBundle, LogicRanking, MatchResult, QueryContext
 
-MATCH_SYSTEM = """你是投资逻辑框架匹配审计员。根据 Wind/用户事实与 logic_card 定义，评估每张卡的匹配度。
+MATCH_SYSTEM = """你是投资逻辑框架匹配审计员。根据调研事实（万行/Wind Alice/用户输入）与 logic_card 定义，评估每张卡的匹配度。
 输出严格 JSON：
 {
   "rankings": [

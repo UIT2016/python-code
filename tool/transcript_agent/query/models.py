@@ -13,6 +13,8 @@ class QueryContext:
     event_keywords: List[str] = field(default_factory=list)
     wind_intents: List[str] = field(default_factory=list)
     search_queries: List[str] = field(default_factory=list)
+    stock_code: str = ""
+    stock_code_resolve: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -23,6 +25,8 @@ class QueryContext:
             "event_keywords": self.event_keywords,
             "wind_intents": self.wind_intents,
             "search_queries": self.search_queries,
+            "stock_code": self.stock_code,
+            "stock_code_resolve": self.stock_code_resolve,
         }
 
 
@@ -43,6 +47,13 @@ class FactBundle:
     facts: List[FactItem] = field(default_factory=list)
     summary_for_match: str = ""
     wind_status: str = "ok"
+    research_mode: str = "wanxing"
+    research_raw_md: str = ""
+    wind_calls: List[Dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def research_status(self) -> str:
+        return self.wind_status
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -50,6 +61,8 @@ class FactBundle:
             "facts": [f.to_dict() for f in self.facts],
             "summary_for_match": self.summary_for_match,
             "wind_status": self.wind_status,
+            "research_mode": self.research_mode,
+            "has_research_raw": bool(self.research_raw_md),
         }
 
 
