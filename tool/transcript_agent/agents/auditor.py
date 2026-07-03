@@ -7,6 +7,7 @@ from lite_agent.client import OpenAIClient
 
 from transcript_agent.base import AuditIssue, AuditResult, TranscriptContext, parse_json_object
 from transcript_agent.llm_config import llm_chat
+from transcript_agent.timing import TimingCollector
 
 AUDIT_SYSTEM = """你是一位投资内容质量审计员，按给定 Audit Rubric 评估提取结果。
 输出严格 JSON 对象，不要输出其它文字。
@@ -23,7 +24,7 @@ AUDIT_SYSTEM = """你是一位投资内容质量审计员，按给定 Audit Rubr
     "noise_removal": 12
   },
   "issues": [
-    {"severity": "major|minor", "field": "insights[2]", "problem": "问题描述", "fix": "修复建议"}
+    {"severity": "major|minor", "field": "logic_cards[0].triggers", "problem": "问题描述", "fix": "修复建议"}
   ],
   "revision_prompt": "给提取 Agent 的修订指令，≤500字"
 }
@@ -31,7 +32,8 @@ AUDIT_SYSTEM = """你是一位投资内容质量审计员，按给定 Audit Rubr
 判定规则：
 - passed = score >= pass_threshold 且无 major issue
 - fidelity 单项低于 min_fidelity 则 passed 必须为 false
-- 不得编造原文没有的标的、数据、结论"""
+- logic_cards 须满足 rubric 中 logic_card_required_fields
+- 不得编造原文没有的标的、数据、逻辑框架"""
 
 
 class AuditorAgent:
@@ -46,6 +48,7 @@ class AuditorAgent:
         draft: Dict[str, Any],
         *,
         on_progress: Optional[Any] = None,
+        timing: Optional[TimingCollector] = None,
     ) -> AuditResult:
         if on_progress:
             on_progress(70, f"审计中（第 {ctx.retry_count + 1} 轮）...")
@@ -60,9 +63,25 @@ class AuditorAgent:
 待审计提取结果：
 {json.dumps(draft, ensure_ascii=False, indent=2)}
 """
-        raw = await llm_chat(self.llm, AUDIT_SYSTEM, user)
+
+        async def _call() -> AuditResult:
+            raw = await llm_chat(self.llm, AUDIT_SYSTEM, user)
+            return self._parse_audit_response(raw, rubric, rubric_version, ctx)
+
+        if timing:
+            with timing.step(f"audit_r{ctx.retry_count + 1}"):
+                return await _call()
+        return await _call()
+
+    def _parse_audit_response(
+        self,
+        raw: str,
+        rubric: Dict[str, Any],
+        rubric_version: str,
+        ctx: TranscriptContext,
+    ) -> AuditResult:
         data = parse_json_object(raw) or {}
-        issues = []
+        issues: List[AuditIssue] = []
         for row in data.get("issues") or []:
             if not isinstance(row, dict):
                 continue

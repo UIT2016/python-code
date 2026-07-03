@@ -12,6 +12,8 @@ AGENT_DIR = Path(__file__).resolve().parent
 TOOL_DIR = AGENT_DIR.parent
 TRANSCRIPT_DIR = TOOL_DIR / "transcripts"
 PROCESSED_DIR = AGENT_DIR / "processed"
+OLD_PROCESSED_DIR = AGENT_DIR / "old_processed"
+ANALYSIS_RESULTS_DIR = AGENT_DIR / "analysis_results"
 RULES_DIR = AGENT_DIR / "rules"
 KNOWLEDGE_DIR = AGENT_DIR / "knowledge"
 ACTIVE_RUBRIC_PATH = RULES_DIR / "active_rubric.json"
@@ -29,20 +31,39 @@ class TextBatch:
 
 
 @dataclass
-class InsightItem:
-    category: str
-    claim: str
-    reasoning: str = ""
+class LogicCard:
+    logic_id: str
+    logic_name: str
+    logic_family: str = ""
+    summary: str = ""
+    triggers: List[str] = field(default_factory=list)
+    veto_conditions: List[str] = field(default_factory=list)
+    preconditions: List[str] = field(default_factory=list)
+    analysis_steps: List[str] = field(default_factory=list)
+    answer_sections: List[str] = field(default_factory=list)
+    related_logics: List[str] = field(default_factory=list)
+    exclude_logics: List[str] = field(default_factory=list)
+    keywords: List[str] = field(default_factory=list)
     evidence_quotes: List[str] = field(default_factory=list)
-    actionable: str = ""
+    examples: List[Dict[str, str]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "category": self.category,
-            "claim": self.claim,
-            "reasoning": self.reasoning,
+            "logic_id": self.logic_id,
+            "logic_name": self.logic_name,
+            "logic_family": self.logic_family,
+            "summary": self.summary,
+            "triggers": self.triggers,
+            "veto_conditions": self.veto_conditions,
+            "preconditions": self.preconditions,
+            "analysis_steps": self.analysis_steps,
+            "answer_sections": self.answer_sections,
+            "related_logics": self.related_logics,
+            "exclude_logics": self.exclude_logics,
+            "keywords": self.keywords,
             "evidence_quotes": self.evidence_quotes,
-            "actionable": self.actionable,
+            "examples": self.examples,
+            "rag_text": build_rag_text(self),
         }
 
 
@@ -51,8 +72,7 @@ class ExtractResult:
     source_file: str
     video_meta: Dict[str, str]
     core_thesis: str = ""
-    framework_tags: List[str] = field(default_factory=list)
-    insights: List[InsightItem] = field(default_factory=list)
+    logic_cards: List[LogicCard] = field(default_factory=list)
     removed_summary: str = ""
     revision_notes: str = ""
 
@@ -61,11 +81,120 @@ class ExtractResult:
             "source_file": self.source_file,
             "video_meta": self.video_meta,
             "core_thesis": self.core_thesis,
-            "framework_tags": self.framework_tags,
-            "insights": [i.to_dict() for i in self.insights],
+            "logic_cards": [c.to_dict() for c in self.logic_cards],
             "removed_summary": self.removed_summary,
             "revision_notes": self.revision_notes,
         }
+
+
+def normalize_logic_id(raw: str) -> str:
+    text = (raw or "").strip().lower()
+    text = re.sub(r"[^\w\s-]", "", text, flags=re.UNICODE)
+    text = re.sub(r"[\s-]+", "_", text).strip("_")
+    return text or "unnamed_logic"
+
+
+def build_rag_text(card: LogicCard) -> str:
+    parts = [
+        f"逻辑: {card.logic_name} ({card.logic_id})",
+        f"大类: {card.logic_family}",
+        f"定义: {card.summary}",
+        f"触发信号: {'; '.join(card.triggers)}",
+        f"否决条件: {'; '.join(card.veto_conditions)}",
+        f"前置条件: {'; '.join(card.preconditions)}",
+        f"分析步骤: {'; '.join(card.analysis_steps)}",
+        f"回答结构: {'; '.join(card.answer_sections)}",
+        f"关键词: {', '.join(card.keywords)}",
+    ]
+    if card.related_logics:
+        parts.append(f"相关逻辑: {', '.join(card.related_logics)}")
+    if card.exclude_logics:
+        parts.append(f"互斥逻辑: {', '.join(card.exclude_logics)}")
+    if card.examples:
+        ex = "; ".join(
+            f"{e.get('subject', '')}:{e.get('note', e.get('scenario', ''))}"
+            for e in card.examples
+            if isinstance(e, dict)
+        )
+        if ex:
+            parts.append(f"案例: {ex}")
+    return "\n".join(p for p in parts if p.split(": ", 1)[-1])
+
+
+def _merge_str_lists(*groups: List[str]) -> List[str]:
+    seen: set[str] = set()
+    out: List[str] = []
+    for group in groups:
+        for item in group:
+            s = str(item).strip()
+            if s and s not in seen:
+                seen.add(s)
+                out.append(s)
+    return out
+
+
+def parse_logic_card(row: Dict[str, Any]) -> Optional[LogicCard]:
+    if not isinstance(row, dict):
+        return None
+    logic_id = normalize_logic_id(str(row.get("logic_id") or row.get("logic_name") or ""))
+    logic_name = str(row.get("logic_name") or logic_id).strip()
+    if not logic_name:
+        return None
+    examples: List[Dict[str, str]] = []
+    for ex in row.get("examples") or []:
+        if isinstance(ex, dict):
+            examples.append(
+                {
+                    "subject": str(ex.get("subject") or "").strip(),
+                    "scenario": str(ex.get("scenario") or "").strip(),
+                    "note": str(ex.get("note") or "").strip(),
+                }
+            )
+        elif isinstance(ex, str) and ex.strip():
+            examples.append({"subject": ex.strip(), "scenario": "", "note": ""})
+    return LogicCard(
+        logic_id=logic_id,
+        logic_name=logic_name,
+        logic_family=str(row.get("logic_family") or "").strip(),
+        summary=str(row.get("summary") or "").strip(),
+        triggers=[str(x).strip() for x in (row.get("triggers") or []) if str(x).strip()],
+        veto_conditions=[str(x).strip() for x in (row.get("veto_conditions") or []) if str(x).strip()],
+        preconditions=[str(x).strip() for x in (row.get("preconditions") or []) if str(x).strip()],
+        analysis_steps=[str(x).strip() for x in (row.get("analysis_steps") or []) if str(x).strip()],
+        answer_sections=[str(x).strip() for x in (row.get("answer_sections") or []) if str(x).strip()],
+        related_logics=[normalize_logic_id(str(x)) for x in (row.get("related_logics") or []) if str(x).strip()],
+        exclude_logics=[normalize_logic_id(str(x)) for x in (row.get("exclude_logics") or []) if str(x).strip()],
+        keywords=[str(x).strip() for x in (row.get("keywords") or []) if str(x).strip()],
+        evidence_quotes=[str(x).strip() for x in (row.get("evidence_quotes") or []) if str(x).strip()],
+        examples=examples,
+    )
+
+
+def merge_logic_cards(cards: List[LogicCard]) -> List[LogicCard]:
+    merged: Dict[str, LogicCard] = {}
+    for card in cards:
+        key = card.logic_id
+        if key not in merged:
+            merged[key] = card
+            continue
+        existing = merged[key]
+        merged[key] = LogicCard(
+            logic_id=key,
+            logic_name=existing.logic_name or card.logic_name,
+            logic_family=existing.logic_family or card.logic_family,
+            summary=existing.summary if len(existing.summary) >= len(card.summary) else card.summary,
+            triggers=_merge_str_lists(existing.triggers, card.triggers),
+            veto_conditions=_merge_str_lists(existing.veto_conditions, card.veto_conditions),
+            preconditions=_merge_str_lists(existing.preconditions, card.preconditions),
+            analysis_steps=_merge_str_lists(existing.analysis_steps, card.analysis_steps),
+            answer_sections=_merge_str_lists(existing.answer_sections, card.answer_sections),
+            related_logics=_merge_str_lists(existing.related_logics, card.related_logics),
+            exclude_logics=_merge_str_lists(existing.exclude_logics, card.exclude_logics),
+            keywords=_merge_str_lists(existing.keywords, card.keywords),
+            evidence_quotes=_merge_str_lists(existing.evidence_quotes, card.evidence_quotes)[:5],
+            examples=existing.examples + [e for e in card.examples if e not in existing.examples],
+        )
+    return list(merged.values())
 
 
 @dataclass

@@ -2,15 +2,19 @@
 # 修改后请在 Web 页点击「刷新审计规则」使 Agent3 重新生成 active_rubric.json
 
 must:
-  - 必须保留「超景气价值投机/超景气价值投资」相关框架术语（若原文出现）
-  - 必须保留定性分析逻辑链，不能只留结论
-  - 个股/板块案例必须附带原文 evidence_quotes
+  - 按原文提取多种投资逻辑框架，不限于超景气；出现困境反转、均值回归、流动性、选股评分等须分别生成 logic_card
+  - 每条 logic_card 必须可独立用于 RAG 匹配：含 logic_id、triggers、veto_conditions、keywords
+  - 必须保留定性分析逻辑链（analysis_steps），不能只留结论
+  - evidence_quotes 必须来自原文，案例类信息写入 examples 字段
 
 must_not:
-  - 不得添加原文未提及的股票代码或具体价位
+  - 不得把未在原文出现的逻辑框架强行塞入（如无困境反转内容却生成 distress_reversal 卡）
+  - 不得添加原文未提及的股票代码、具体价位或 fabricated 数据
   - 不得将 UP 主口播玩笑话当作投资建议
   - 不得保留「求三连」「关注 UP 主」类内容
+  - 不得将不同逻辑混在一张卡里；一种可匹配框架一张卡
 
 locked_rules:
   - pass_threshold 不得低于 80
   - fidelity 维度权重不得低于 20
+  - 每张 logic_card 必须包含 triggers 与 veto_conditions（可为空数组但字段必须存在）

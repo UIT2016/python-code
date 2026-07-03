@@ -8,8 +8,17 @@
       "weight": 20,
       "label": "忠实原文",
       "checks": [
-        "每条 insight 必须有 evidence_quotes",
-        "不得编造原文未出现的个股、数据、结论"
+        "每条 logic_card 必须有 evidence_quotes",
+        "不得编造原文未出现的逻辑框架或数据"
+      ]
+    },
+    {
+      "id": "card_quality",
+      "weight": 20,
+      "label": "逻辑卡质量",
+      "checks": [
+        "每种独立逻辑单独成卡",
+        "triggers / veto_conditions / keywords 具体可匹配"
       ]
     },
     {
@@ -17,8 +26,8 @@
       "weight": 20,
       "label": "投资价值",
       "checks": [
-        "保留定性投资框架与因果链",
-        "保留板块/行业判断与案例"
+        "保留多种投资框架，不限于超景气",
+        "analysis_steps 与 answer_sections 完整"
       ]
     },
     {
@@ -26,16 +35,8 @@
       "weight": 20,
       "label": "结构完整",
       "checks": [
-        "core_thesis 清晰且非空",
-        "framework_tags 反映视频所属框架"
-      ]
-    },
-    {
-      "id": "actionability",
-      "weight": 20,
-      "label": "可行动性",
-      "checks": [
-        "关键策略观点附带可操作建议"
+        "core_thesis 清晰",
+        "logic_cards 字段齐全"
       ]
     },
     {
@@ -43,19 +44,30 @@
       "weight": 20,
       "label": "噪音剔除",
       "checks": [
-        "剔除 B 站口播寒暄、求关注",
-        "剔除重复口癖与无关闲聊"
+        "剔除 B 站口播寒暄与无关闲聊"
       ]
     }
   ],
   "forbidden_patterns": ["必涨", "稳赚", "神秘代码"],
-  "required_fields": ["core_thesis", "framework_tags", "insights"],
+  "required_fields": ["core_thesis", "logic_cards"],
+  "logic_card_required_fields": [
+    "logic_id",
+    "logic_name",
+    "logic_family",
+    "summary",
+    "triggers",
+    "veto_conditions",
+    "analysis_steps",
+    "answer_sections",
+    "keywords",
+    "evidence_quotes"
+  ],
   "manual_must": [
-    "必须保留定性分析逻辑链，不能只留结论",
-    "个股/板块案例必须附带原文 evidence_quotes"
+    "按原文提取多种投资逻辑，每种框架一张 logic_card",
+    "logic_card 须含 triggers 与 veto_conditions 便于 RAG 匹配"
   ],
   "manual_must_not": [
-    "不得添加原文未提及的股票代码或具体价位",
-    "不得将 UP 主口播玩笑话当作投资建议"
+    "不得强行套用原文未出现的逻辑框架",
+    "不得将不同逻辑混在一张卡里"
   ]
 }

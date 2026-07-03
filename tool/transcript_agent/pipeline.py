@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
@@ -11,6 +12,9 @@ from transcript_agent.base import PROCESSED_DIR, TRANSCRIPT_DIR, TranscriptConte
 from transcript_agent.llm_config import create_llm_client_from_cfg, load_llm_config
 from transcript_agent.skills.file_split import FileSplitSkill
 from transcript_agent.skills.merge_extract import MergeExtractSkill
+from transcript_agent.timing import TimingCollector
+
+logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[int, str], None]
 
@@ -57,18 +61,25 @@ class TranscriptOrchestrator:
         ctx.meta["llm_model"] = cfg["model"]
         ctx.meta["rubric_version"] = ctx.rubric.get("version")
 
+        if not logging.getLogger().handlers:
+            logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+
+        timing = TimingCollector()
+
         def prog(pct: int, msg: str) -> None:
             if on_progress:
                 on_progress(pct, msg)
 
         prog(5, "切分转写文本...")
-        await FileSplitSkill().execute(ctx)
+        with timing.step("file_split"):
+            await FileSplitSkill().execute(ctx)
 
         extractor = ExtractorAgent(extract_llm)
         auditor = AuditorAgent(audit_llm)
         merger = MergeExtractSkill()
 
         revision_prompt = ""
+        pending_issues: list = []
         previous_draft: Optional[Dict[str, Any]] = None
         passed = False
         final_audit: Optional[Dict[str, Any]] = None
@@ -76,18 +87,26 @@ class TranscriptOrchestrator:
         while ctx.retry_count <= ctx.max_retry:
             if ctx.retry_count == 0 or not previous_draft:
                 prog(10, f"提取精华（轮次 {ctx.retry_count + 1}）...")
-                await extractor.extract_batches(ctx, on_progress=on_progress)
-                result = await merger.merge(ctx)
+                with timing.step(f"extract_map_r{ctx.retry_count + 1}"):
+                    await extractor.extract_batches(ctx, on_progress=on_progress, timing=timing)
+                with timing.step(f"merge_r{ctx.retry_count + 1}"):
+                    result = await merger.merge(ctx)
             else:
                 prog(10, f"修订精华（轮次 {ctx.retry_count + 1}）...")
                 revised = await extractor.revise_draft(
-                    ctx, previous_draft, revision_prompt, on_progress=on_progress
+                    ctx,
+                    previous_draft,
+                    revision_prompt,
+                    issues=pending_issues,
+                    on_progress=on_progress,
+                    timing=timing,
                 )
                 ctx.batch_extracts = [revised]
-                result = await merger.merge(ctx)
+                with timing.step(f"merge_r{ctx.retry_count + 1}"):
+                    result = await merger.merge(ctx)
             draft = result.to_dict()
 
-            audit = await auditor.audit(ctx, draft, on_progress=on_progress)
+            audit = await auditor.audit(ctx, draft, on_progress=on_progress, timing=timing)
             final_audit = audit.to_dict()
             if audit.passed:
                 passed = True
@@ -99,12 +118,20 @@ class TranscriptOrchestrator:
                 break
 
             revision_prompt = audit.revision_prompt or _build_revision_from_issues(audit)
+            pending_issues = audit.issues
             previous_draft = draft
             ctx.retry_count += 1
             prog(55, f"审计未通过，准备第 {ctx.retry_count + 1} 轮修订...")
 
         ctx.meta["retry_count"] = ctx.retry_count
         ctx.meta["passed"] = passed
+        ctx.meta["timing"] = timing.to_dict()
+        logger.info(
+            "[transcript_agent] 完成 %s，总耗时 %.2fs，retry=%s",
+            path.name,
+            ctx.meta["timing"]["total_seconds"],
+            ctx.retry_count,
+        )
         return self._save_outputs(ctx, passed, final_audit)
 
     def _save_outputs(
@@ -116,11 +143,16 @@ class TranscriptOrchestrator:
         PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
         stem = ctx.source_path.stem
         structured_path = PROCESSED_DIR / f"{stem}_structured.json"
+        logic_cards_path = PROCESSED_DIR / f"{stem}_logic_cards.json"
         audit_path = PROCESSED_DIR / f"{stem}_audit.json"
         essence_path = PROCESSED_DIR / f"{stem}_essence.md"
         pipeline_path = PROCESSED_DIR / f"{stem}_pipeline.json"
 
         draft_dict = ctx.draft.to_dict() if ctx.draft else {}
+        if ctx.draft:
+            cards_payload = MergeExtractSkill.build_logic_cards_payload(ctx.draft)
+            with logic_cards_path.open("w", encoding="utf-8") as f:
+                json.dump(cards_payload, f, ensure_ascii=False, indent=2)
         with structured_path.open("w", encoding="utf-8") as f:
             json.dump(draft_dict, f, ensure_ascii=False, indent=2)
         with audit_path.open("w", encoding="utf-8") as f:
@@ -149,11 +181,13 @@ class TranscriptOrchestrator:
             "passed": passed,
             "source_file": ctx.source_path.name,
             "essence": essence_path.name,
+            "logic_cards": logic_cards_path.name if ctx.draft else None,
             "structured": structured_path.name,
             "audit": audit_path.name,
             "pipeline": pipeline_path.name,
             "retry_count": ctx.retry_count,
             "score": (final_audit or {}).get("score"),
+            "logic_card_count": ctx.meta.get("logic_card_count", 0),
         }
 
 
@@ -186,6 +220,7 @@ def list_processed_files() -> list[Dict[str, Any]]:
             {
                 "stem": stem,
                 "essence": path.name,
+                "logic_cards": f"{stem}_logic_cards.json",
                 "structured": f"{stem}_structured.json",
                 "audit": f"{stem}_audit.json",
                 "has_failed": (PROCESSED_DIR / f"{stem}_failed.json").exists(),

@@ -16,8 +16,9 @@ if str(BASE_DIR) not in sys.path:
 from asr_transcriber import resolve_audio_path, transcribe_audio_file, transcribe_audio_files
 from task_store import task_store
 from transcript_agent.agents.rule_curator import RuleCuratorAgent, load_active_rubric
-from transcript_agent.base import PROCESSED_DIR, TRANSCRIPT_DIR
+from transcript_agent.base import ANALYSIS_RESULTS_DIR, PROCESSED_DIR, TRANSCRIPT_DIR
 from transcript_agent.llm_config import create_llm_client_from_cfg, load_llm_config
+from transcript_agent.match_pipeline import MatchOrchestrator, get_registry_stats, list_analysis_results
 from transcript_agent.pipeline import (
     TranscriptOrchestrator,
     list_processed_files,
@@ -202,6 +203,60 @@ def _run_refresh_rules_task(task_id: str, provider: str) -> None:
         task_store.update(task_id, status="error", progress=100, message="规则刷新失败", error=str(exc))
 
 
+def _run_rebuild_index_task(task_id: str) -> None:
+    updater = task_store.make_updater(task_id)
+    try:
+        updater(10, "扫描 logic_cards...")
+
+        async def _run() -> Dict[str, Any]:
+            return await MatchOrchestrator().rebuild_index()
+
+        meta = asyncio.run(_run())
+        task_store.update(
+            task_id,
+            status="done",
+            progress=100,
+            message=f"索引已重建: {meta.get('card_count', 0)} 张卡",
+            result=meta,
+        )
+    except Exception as exc:
+        task_store.update(task_id, status="error", progress=100, message="索引重建失败", error=str(exc))
+
+
+def _run_logic_analyze_task(
+    task_id: str,
+    query: str,
+    context: str,
+    subject_type: str,
+    provider: str,
+) -> None:
+    updater = task_store.make_updater(task_id)
+    try:
+        orchestrator = MatchOrchestrator(provider=provider or None)
+
+        def prog(pct: int, msg: str) -> None:
+            updater(pct, msg)
+
+        async def _run() -> Dict[str, Any]:
+            return await orchestrator.run(
+                query,
+                subject_type=subject_type,
+                context=context,
+                on_progress=prog,
+            )
+
+        result = asyncio.run(_run())
+        task_store.update(
+            task_id,
+            status="done",
+            progress=100,
+            message=f"分析完成: {result.get('selected_logic_id') or '未命中'} ({result.get('selected_score', 0)}分)",
+            result=result,
+        )
+    except Exception as exc:
+        task_store.update(task_id, status="error", progress=100, message="逻辑分析失败", error=str(exc))
+
+
 def create_app() -> Flask:
     app = Flask(__name__, template_folder=str(BASE_DIR / "templates"))
     app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-tool-web-change-in-prod")
@@ -352,6 +407,50 @@ def create_app() -> Flask:
         safe_name = Path(name).name
         path = PROCESSED_DIR / safe_name
         if not path.is_file() or path.resolve().parent != PROCESSED_DIR.resolve():
+            return jsonify({"error": "文件不存在"}), 404
+        return jsonify({"name": safe_name, "content": path.read_text(encoding="utf-8")})
+
+    @app.route("/api/logic/registry")
+    def api_logic_registry():
+        refresh = request.args.get("refresh", "").lower() in {"1", "true", "yes"}
+        try:
+            return jsonify(get_registry_stats(refresh=refresh))
+        except Exception as exc:
+            return jsonify({"error": str(exc), "card_count": 0}), 500
+
+    @app.route("/api/logic/rebuild-index", methods=["POST"])
+    def api_logic_rebuild_index():
+        task_id = task_store.create("rebuild_index", meta={"label": "重建逻辑卡索引"})
+        threading.Thread(target=_run_rebuild_index_task, args=(task_id,), daemon=True).start()
+        return jsonify({"task_id": task_id})
+
+    @app.route("/api/logic/analyze", methods=["POST"])
+    def api_logic_analyze():
+        data = request.get_json(silent=True) or {}
+        query = (data.get("query") or "").strip()
+        if not query:
+            return jsonify({"error": "query 不能为空"}), 400
+        context = (data.get("context") or "").strip()
+        subject_type = (data.get("subject_type") or "auto").strip()
+        provider = (data.get("provider") or "").strip()
+        label = query[:40]
+        task_id = task_store.create("logic_analyze", meta={"label": label})
+        threading.Thread(
+            target=_run_logic_analyze_task,
+            args=(task_id, query, context, subject_type, provider),
+            daemon=True,
+        ).start()
+        return jsonify({"task_id": task_id})
+
+    @app.route("/api/logic/results")
+    def api_logic_results():
+        return jsonify(list_analysis_results())
+
+    @app.route("/api/logic/results/<path:name>")
+    def api_logic_results_content(name: str):
+        safe_name = Path(name).name
+        path = ANALYSIS_RESULTS_DIR / safe_name
+        if not path.is_file() or path.resolve().parent != ANALYSIS_RESULTS_DIR.resolve():
             return jsonify({"error": "文件不存在"}), 404
         return jsonify({"name": safe_name, "content": path.read_text(encoding="utf-8")})
 

@@ -39,7 +39,8 @@ CURATOR_SYSTEM = """你是一位投资内容审计规则专家，根据知识库
   "manual_must_not": []
 }
 
-manual_overrides 中的 must / must_not 必须原样写入 manual_must / manual_must_not，不得删改。"""
+manual_overrides 中的 must / must_not 必须原样写入 manual_must / manual_must_not，不得删改。
+审计对象已从 insights 改为 logic_cards（RAG 逻辑框架卡），rubric 须包含 logic_card_required_fields 与 card_quality 维度。"""
 
 
 def _read_yaml(path: Path) -> Dict[str, Any]:

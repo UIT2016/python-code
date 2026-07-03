@@ -1,28 +1,32 @@
-# 超景气价值投机 — 知识库占位
+# 投资逻辑知识库
 
-本目录用于存放 Agent3（RuleCurator）归纳审计规则时参考的外部知识。
+本目录用于 Agent3 归纳审计规则，以及后续 RAG 逻辑匹配的参考文档。
 
 ## 建议放入的文档
 
-- 你的投资框架笔记（如「笨韭单击/双击」定义）
-- 术语表（现象级事件、拐点信号、定性分析等）
-- 好/坏提取样例（`examples/good.md`、`examples/bad.md`）
+- 各类投资框架笔记（超景气、困境反转、均值回归、流动性等）
+- 术语表与 logic_id 命名约定
+- 好/坏 logic_card 样例（`examples/good_card.json`）
 - 书籍或文章摘录（Markdown 格式）
 
-## 文件格式
+## 逻辑大类参考
 
-- 支持 `.md` 和 `.txt`
-- `README.md` 不会被纳入知识库
-- 单文件建议不超过 8000 字（首版无 RAG，全文注入 Prompt）
+见 [`../rules/logic_families.yaml`](../rules/logic_families.yaml)，提炼时会作为 hint 注入，**仅提取原文实际出现的框架**。
 
-## 框架要点（占位）
+## 提炼输出（RAG 用）
 
-**超景气价值投机**核心思路：
+精炼后会生成：
 
-1. **现象级事件**：产业出现拐点信号，赛道变为高景气
-2. **笨韭单击**：仅行业出现现象级事件，企业基本面尚未拐点
-3. **笨韭双击**：行业拐点 + 企业基本面提前出现业绩拐点
-4. **定性优先**：关注逻辑链与框架，而非精确 PE/PB 数值
-5. **操作节奏**：买入等待逻辑兑现，趋势止盈（如五日线）
+| 文件 | 用途 |
+|------|------|
+| `{标题}_logic_cards.json` | **RAG 主数据源**，每张卡含 triggers、veto、keywords、rag_text |
+| `{标题}_structured.json` | 完整结构化结果 |
+| `{标题}_essence.md` | 人类可读预览 |
 
-将更完整的框架文档放在此目录下，Agent3 刷新规则时会自动读取。
+## logic_card 字段说明
+
+- `logic_id` / `logic_name`：逻辑标识
+- `logic_family`：大类（超景气 / 困境反转 / …）
+- `triggers` / `veto_conditions`：匹配与否决信号
+- `analysis_steps` / `answer_sections`：命中后如何分析、如何回答
+- `rag_text`：预拼接的检索文本，可直接 embedding

@@ -1,0 +1,10 @@
+{
+  "wind_api_key": "",
+  "wind_api_base": "https://aifinmarket.wind.com.cn",
+  "wind_mcp_path": "/mcp/v1/tools/call",
+  "embedding_model": "text-embedding-v3",
+  "embedding_api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  "embedding_api_key": "",
+  "match_top_k": 10,
+  "match_threshold": 70
+}

@@ -65,13 +65,25 @@
       white-space: pre-wrap;
     }
     .rubric-meta { font-size: 0.82rem; color: var(--muted); margin-bottom: 0.5rem; }
+    .tabs {
+      display: flex; flex-wrap: wrap; gap: 0.35rem;
+      border-bottom: 1px solid var(--border); margin: -0.25rem 0 1rem; padding-bottom: 0.75rem;
+    }
+    .tab-btn {
+      background: transparent; color: var(--muted); border: 1px solid transparent;
+      border-radius: 8px; padding: 0.45rem 0.9rem; cursor: pointer; font-size: 0.88rem;
+    }
+    .tab-btn:hover { color: var(--text); border-color: var(--border); }
+    .tab-btn.active { color: var(--text); background: var(--bg); border-color: var(--accent); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
       <h1>视频下载 & 音频转写</h1>
-      <p class="hint">各操作互不阻塞：转写进行中也可解析/下载下一个视频；所有后台任务在下方「任务中心」统一展示，页面不会刷新。</p>
+      <p class="hint">各操作互不阻塞；后台任务在「任务中心」展示。下方 Tab 切换各功能模块，切换时会自动刷新对应文件列表。</p>
     </div>
 
     <div class="card">
@@ -80,7 +92,15 @@
     </div>
 
     <div class="card">
-      <h2>① 视频下载（yt-dlp）</h2>
+      <nav class="tabs" id="main-tabs">
+        <button type="button" class="tab-btn active" data-tab="download">① 视频下载</button>
+        <button type="button" class="tab-btn" data-tab="transcribe">② 音频转写</button>
+        <button type="button" class="tab-btn" data-tab="refine">③ 转录精炼</button>
+        <button type="button" class="tab-btn" data-tab="logic">④ 逻辑分析</button>
+      </nav>
+
+      <div id="panel-download" class="tab-panel active">
+      <h2>视频下载（yt-dlp）</h2>
       <div class="row">
         <label class="block" for="url">视频 URL</label>
         <input type="url" id="url" placeholder="https://www.bilibili.com/video/BV..." />
@@ -102,10 +122,10 @@
         </div>
         <button type="button" class="submit" id="btn-download">开始下载</button>
       </div>
-    </div>
+      </div>
 
-    <div class="card">
-      <h2>② 音频转写（Qwen3 ASR）</h2>
+      <div id="panel-transcribe" class="tab-panel">
+      <h2>音频转写（Qwen3 ASR）</h2>
       <div class="toolbar">
         <button type="button" id="btn-audio-all">全选</button>
         <button type="button" id="btn-audio-none">全不选</button>
@@ -133,10 +153,10 @@
       </div>
       <button type="button" class="submit green" id="btn-transcribe">开始转写</button>
       <div id="transcribe-toast" class="hidden"></div>
-    </div>
+      </div>
 
-    <div class="card">
-      <h2>③ 转录精炼（三 Agent 审计）</h2>
+      <div id="panel-refine" class="tab-panel">
+      <h2>转录精炼（三 Agent 审计）</h2>
       <p class="hint">Agent1 提取投资精华 → Agent2 按规则审计 → 未达标则打回修订（最多 3 轮）。Agent3 维护审计规则（知识库 + 手工规则）。</p>
       <div class="row">
         <span class="block">LLM Provider</span>
@@ -184,6 +204,47 @@
         <select id="processed-select"><option value="">— 选择已精炼文件 —</option></select>
         <div class="preview-box hidden" id="processed-preview"></div>
       </div>
+      </div>
+
+      <div id="panel-logic" class="tab-panel">
+      <h2>逻辑分析（查询 → Wind → 匹配 → 回答）</h2>
+      <p class="hint">输入个股/板块，Wind AIFin 取数 + logic_cards 向量检索 + LLM 重排，按命中框架生成分析报告。需配置 tool/wind.local.json 与 embedding API Key。</p>
+      <div class="rubric-meta" id="logic-registry-meta">逻辑库：加载中...</div>
+      <div class="toolbar">
+        <button type="button" id="btn-logic-rebuild-index">重建 logic_cards 索引</button>
+        <button type="button" id="btn-logic-registry-refresh">刷新逻辑库统计</button>
+        <button type="button" id="btn-logic-results-refresh">刷新分析历史</button>
+      </div>
+      <div class="row">
+        <label class="block" for="logic_query">标的 / 查询</label>
+        <input type="text" id="logic_query" placeholder="京东方A 玻璃基板 康宁" />
+      </div>
+      <div class="row">
+        <label class="block" for="logic_context">补充事件（可选）</label>
+        <input type="text" id="logic_context" placeholder="反内卷 产能出清" />
+      </div>
+      <div class="row">
+        <span class="block">类型 / LLM</span>
+        <select id="logic_subject_type" style="width:48%;margin-right:2%;">
+          <option value="auto">自动识别</option>
+          <option value="stock">个股</option>
+          <option value="sector">板块</option>
+        </select>
+        <select id="logic_provider" style="width:48%;">
+          <option value="">默认 LLM</option>
+          <option value="deepseek">deepseek</option>
+          <option value="qwen">qwen</option>
+        </select>
+      </div>
+      <button type="button" class="submit green" id="btn-logic-analyze">开始逻辑分析</button>
+      <div id="logic-toast" class="hidden"></div>
+      <div class="divider"></div>
+      <div class="row">
+        <span class="block">分析结果预览</span>
+        <select id="logic-result-select"><option value="">— 选择分析报告 —</option></select>
+        <div class="preview-box hidden" id="logic-result-preview"></div>
+      </div>
+      </div>
     </div>
   </div>
 
@@ -202,16 +263,54 @@
       transcriptRefine: {{ url_for('api_transcript_refine') | tojson }},
       transcriptProcessed: {{ url_for('api_transcript_processed') | tojson }},
       transcriptProcessedContent: (name) => {{ url_for('api_transcript_processed_content', name='__NAME__') | tojson }}.replace("__NAME__", encodeURIComponent(name)),
+      logicRegistry: {{ url_for('api_logic_registry') | tojson }},
+      logicRebuildIndex: {{ url_for('api_logic_rebuild_index') | tojson }},
+      logicAnalyze: {{ url_for('api_logic_analyze') | tojson }},
+      logicResults: {{ url_for('api_logic_results') | tojson }},
+      logicResultContent: (name) => {{ url_for('api_logic_results_content', name='__NAME__') | tojson }}.replace("__NAME__", encodeURIComponent(name)),
     };
     const TASK_STORAGE_KEY = "tool_task_ids";
+    const TAB_STORAGE_KEY = "tool_active_tab";
     const TYPE_LABEL = {
       download: "下载", transcribe: "转写", transcribe_batch: "批量转写",
       refine: "精炼", refine_batch: "批量精炼", refresh_rules: "刷新规则",
+      rebuild_index: "重建索引", logic_analyze: "逻辑分析",
     };
 
     let parseResult = null;
     const trackedTasks = new Map();
     const pollingTasks = new Set();
+    const loadedTabs = new Set();
+
+    function switchTab(name, forceReload = false) {
+      document.querySelectorAll(".tab-btn").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.tab === name);
+      });
+      document.querySelectorAll(".tab-panel").forEach((panel) => {
+        panel.classList.toggle("active", panel.id === `panel-${name}`);
+      });
+      sessionStorage.setItem(TAB_STORAGE_KEY, name);
+      if (forceReload || !loadedTabs.has(name)) {
+        if (name === "download" || name === "transcribe") refreshAudioList();
+        if (name === "refine") {
+          loadRubric();
+          loadManualRules();
+          refreshTranscriptList();
+          refreshProcessedList();
+        }
+        if (name === "logic") {
+          loadLogicRegistry();
+          refreshLogicResults();
+        }
+        loadedTabs.add(name);
+      }
+    }
+
+    document.getElementById("main-tabs").addEventListener("click", (e) => {
+      const btn = e.target.closest(".tab-btn");
+      if (!btn) return;
+      switchTab(btn.dataset.tab, true);
+    });
 
     function showToast(elId, msg, ok) {
       const el = document.getElementById(elId);
@@ -238,12 +337,20 @@
       if (task.type === "download" && task.result) return `已保存 tool/${task.result.path}`;
       if (task.result && task.result.items) {
         if (task.type === "refine" || task.type === "refine_batch") {
-          return task.result.items.map((it) => `${it.source_file} → ${it.essence}（${it.passed ? "通过" : "未通过"} ${it.score ?? "-"}分）`).join("；");
+          return task.result.items.map((it) =>
+            `${it.source_file} → ${it.logic_cards || it.essence}（${it.logic_card_count ?? "?"} 张卡，${it.passed ? "通过" : "未通过"} ${it.score ?? "-"}分）`
+          ).join("；");
         }
         return task.result.items.map((it) => `${it.file_name} → ${it.txt}（${it.elapsed_sec}s）`).join("；");
       }
       if (task.type === "refresh_rules" && task.result) {
         return `规则版本 ${task.result.version}`;
+      }
+      if (task.type === "rebuild_index" && task.result) {
+        return `${task.result.card_count || 0} 张卡，embedding ${task.result.version || ""}`;
+      }
+      if (task.type === "logic_analyze" && task.result) {
+        return `${task.result.analysis} → ${task.result.selected_logic_id || "未命中"} (${task.result.selected_score ?? "-"}分)`;
       }
       return task.message || "";
     }
@@ -314,9 +421,17 @@
           }
           if (task.status === "done") {
             if (task.type === "download") refreshAudioList();
+            if (task.type === "transcribe" || task.type === "transcribe_batch") {
+              refreshTranscriptList();
+            }
             if (task.type === "refine" || task.type === "refine_batch" || task.type === "refresh_rules") {
               loadRubric();
               refreshProcessedList();
+              loadLogicRegistry(true);
+            }
+            if (task.type === "rebuild_index" || task.type === "logic_analyze") {
+              loadLogicRegistry(true);
+              refreshLogicResults();
             }
             break;
           }
@@ -576,9 +691,76 @@
       }
     };
 
-    loadRubric();
-    loadManualRules();
-    refreshProcessedList();
+    async function loadLogicRegistry(refresh = false) {
+      try {
+        const url = refresh ? `${API.logicRegistry}?refresh=1` : API.logicRegistry;
+        const resp = await fetch(url);
+        const data = await parseJsonResponse(resp);
+        document.getElementById("logic-registry-meta").textContent =
+          `逻辑卡: ${data.card_count ?? 0} 张 · 索引: ${data.embedding_loaded ? data.embedding_version : "未构建"} · logic_cards 文件: ${data.source_files ?? 0}`;
+      } catch (e) {
+        document.getElementById("logic-registry-meta").textContent = `逻辑库加载失败: ${e.message}`;
+      }
+    }
+
+    async function refreshLogicResults() {
+      const resp = await fetch(API.logicResults);
+      const items = await parseJsonResponse(resp);
+      const sel = document.getElementById("logic-result-select");
+      sel.innerHTML = '<option value="">— 选择分析报告 —</option>' +
+        items.map((it) => `<option value="${it.analysis}">${it.stem}</option>`).join("");
+    }
+
+    document.getElementById("logic-result-select").onchange = async (e) => {
+      const name = e.target.value;
+      const box = document.getElementById("logic-result-preview");
+      if (!name) { box.classList.add("hidden"); return; }
+      const resp = await fetch(API.logicResultContent(name));
+      const data = await parseJsonResponse(resp);
+      box.textContent = data.content || "";
+      box.classList.remove("hidden");
+    };
+
+    document.getElementById("btn-logic-rebuild-index").onclick = async () => {
+      const resp = await fetch(API.logicRebuildIndex, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      const data = await parseJsonResponse(resp);
+      if (!resp.ok) return showToast("logic-toast", data.error || "启动失败", false);
+      trackTask(data.task_id, "rebuild_index", "重建 logic_cards 索引");
+      showToast("logic-toast", "索引重建任务已加入任务中心", true);
+    };
+
+    document.getElementById("btn-logic-registry-refresh").onclick = () => loadLogicRegistry(true);
+    document.getElementById("btn-logic-results-refresh").onclick = refreshLogicResults;
+
+    document.getElementById("btn-logic-analyze").onclick = async () => {
+      const query = document.getElementById("logic_query").value.trim();
+      if (!query) return showToast("logic-toast", "请输入标的或查询", false);
+      const btn = document.getElementById("btn-logic-analyze");
+      btn.disabled = true;
+      try {
+        const resp = await fetch(API.logicAnalyze, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query,
+            context: document.getElementById("logic_context").value.trim(),
+            subject_type: document.getElementById("logic_subject_type").value,
+            provider: document.getElementById("logic_provider").value,
+          }),
+        });
+        const data = await parseJsonResponse(resp);
+        if (!resp.ok) throw new Error(data.error || "启动失败");
+        trackTask(data.task_id, "logic_analyze", query.slice(0, 40));
+        showToast("logic-toast", "逻辑分析任务已加入任务中心", true);
+      } catch (e) {
+        showToast("logic-toast", e.message, false);
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
+    const initialTab = sessionStorage.getItem(TAB_STORAGE_KEY) || "download";
+    switchTab(initialTab);
   </script>
 </body>
 </html>
