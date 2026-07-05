@@ -197,6 +197,7 @@ class WindAliceClient:
         *,
         context: str = "",
         on_progress: Optional[ProgressCallback] = None,
+        structured_facts: Optional[FactBundle] = None,
     ) -> FactBundle:
         research_calls: List[Dict[str, Any]] = []
         if not self.api_key:
@@ -209,6 +210,11 @@ class WindAliceClient:
             prompt_parts.append(context.strip())
         if query.sector_hint:
             prompt_parts.append(f"板块:{query.sector_hint}")
+        if structured_facts and structured_facts.research_raw_sections:
+            section_lines = ["结构化检索结果（SearchPlan）："]
+            for intent, text in structured_facts.research_raw_sections.items():
+                section_lines.append(f"[{intent}] {text[:2000]}")
+            prompt_parts.append("\n".join(section_lines))
         prompt = " ".join(p for p in prompt_parts if p)
 
         skill_name = resolve_skill_name(self.default_skill) or None
@@ -240,7 +246,7 @@ class WindAliceClient:
             summary_parts = [f"标的:{query.subject}", f"深度调研:Alice"]
             for fact in facts[:6]:
                 summary_parts.append(f"[{fact.fact_type}] {fact.text[:120]}")
-            return FactBundle(
+            bundle = FactBundle(
                 subject=query.subject,
                 facts=facts,
                 summary_for_match="；".join(summary_parts)[:800],
@@ -249,6 +255,7 @@ class WindAliceClient:
                 research_raw_md=raw_text,
                 wind_calls=research_calls,
             )
+            return self._merge_structured_facts(bundle, structured_facts, research_calls)
         except Exception as exc:
             call_record["response"] = None
             call_record["error"] = str(exc)
@@ -258,6 +265,25 @@ class WindAliceClient:
             bundle.wind_calls = research_calls
             bundle.research_mode = "wind_alice"
             return bundle
+
+    @staticmethod
+    def _merge_structured_facts(
+        bundle: FactBundle,
+        structured: Optional[FactBundle],
+        alice_calls: List[Dict[str, Any]],
+    ) -> FactBundle:
+        if not structured:
+            return bundle
+        bundle.research_raw_sections = dict(structured.research_raw_sections)
+        wind_calls = list(structured.wind_calls or [])
+        wind_calls.extend(alice_calls)
+        bundle.wind_calls = wind_calls
+        seen = {f.fact_type for f in bundle.facts}
+        merged_facts = list(structured.facts) + [f for f in bundle.facts if f.fact_type not in seen]
+        bundle.facts = merged_facts[:16]
+        if structured.summary_for_match:
+            bundle.summary_for_match = f"{structured.summary_for_match}；{bundle.summary_for_match}"[:1500]
+        return bundle
 
     @staticmethod
     def _degraded(query: QueryContext, reason: str) -> FactBundle:

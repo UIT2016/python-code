@@ -31,3 +31,9 @@ def load_wanxing_config() -> Dict[str, Any]:
 def save_research_response_enabled(cfg: Optional[Dict[str, Any]] = None) -> bool:
     cfg = cfg or load_wanxing_config()
     return bool(cfg.get("save_research_response", False))
+
+
+def wanxing_research_mode(cfg: Optional[Dict[str, Any]] = None) -> str:
+    cfg = cfg or load_wanxing_config()
+    mode = str(cfg.get("wanxing_research_mode") or "search").strip().lower()
+    return mode if mode in ("search", "mcp") else "search"

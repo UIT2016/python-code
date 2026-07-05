@@ -207,8 +207,8 @@
       </div>
 
       <div id="panel-logic" class="tab-panel">
-      <h2>逻辑分析（查询 → 万行取数 → 匹配 → 回答）</h2>
-      <p class="hint">默认使用万行一言 MCP 取数 + logic_cards 向量检索 + LLM 重排。需配置 tool/wanxing.local.json 与 embedding API Key（wind.local.json）。勾选深度调研时将改用 Wind Alice（需 wind_api_key）。</p>
+      <h2>逻辑分析（查询 → 万行金融搜索 → 匹配 → 回答）</h2>
+      <p class="hint">默认使用万行金融搜索 API 取数（业务占比/资产负债/公告/研报）；可在 wanxing.local.json 设 wanxing_research_mode=mcp 切换 MCP 后备。个股走「业务线 × logic_card → LLM 综合」；板块直接 logic 匹配。需配置 tool/wanxing.local.json 与 embedding API Key。勾选深度调研时先用 Wind 结构化检索，再 Wind Alice 深度分析。</p>
       <div class="rubric-meta" id="logic-registry-meta">逻辑库：加载中...</div>
       <div class="toolbar">
         <button type="button" id="btn-logic-rebuild-index">重建 logic_cards 索引</button>
@@ -356,7 +356,14 @@
         return `${task.result.card_count || 0} 张卡，embedding ${task.result.version || ""}`;
       }
       if (task.type === "logic_analyze" && task.result) {
-        const mode = task.result.research_mode || "wanxing";
+        const modeLabels = {
+          wanxing_search: "万行搜索",
+          wanxing_mcp: "万行MCP",
+          wind_alice: "Alice",
+          wind_search: "Wind检索",
+          wanxing: "万行",
+        };
+        const mode = modeLabels[task.result.research_mode] || task.result.research_mode || "万行";
         return `[${mode}] ${task.result.analysis} → ${task.result.selected_logic_id || "未命中"} (${task.result.selected_score ?? "-"}分)`;
       }
       return task.message || "";

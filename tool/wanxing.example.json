@@ -1,5 +1,8 @@
 {
   "wanxing_api_key": "",
+  "wanxing_research_mode": "search",
+  "wanxing_search_api_url": "https://api.wanxingai.com/v1/web-search/",
+  "wanxing_search_timeout_sec": 120,
   "wanxing_mcp_url": "https://mcp.wanxingai.com/sse",
   "save_research_response": true
 }

@@ -10,18 +10,22 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from transcript_agent.base import ANALYSIS_RESULTS_DIR
 from transcript_agent.llm_config import create_llm_client_from_cfg, load_llm_config
 from transcript_agent.query.answerer import AnswerAgent
+from transcript_agent.query.balance_sheet_risk_analyzer import BalanceSheetRiskAnalyzer
+from transcript_agent.query.business_segment_extractor import BusinessSegmentExtractor
+from transcript_agent.query.business_segment_matcher import BusinessSegmentMatcher
 from transcript_agent.query.card_registry import card_by_id, get_registry_meta, load_registry_cards, save_registry_snapshot
 from transcript_agent.query.embed_index import EmbedIndex
 from transcript_agent.query.fact_provider import fetch_research_facts
 from transcript_agent.query.matcher import LogicMatcher
 from transcript_agent.query.models import AnalysisResult
 from transcript_agent.query.parser import QueryParserAgent
+from transcript_agent.query.stock_score_synthesizer import StockScoreSynthesizer
 from transcript_agent.query.wanxing_fetcher import (
     apply_stock_code_from_query,
     resolve_stock_code_by_name,
 )
+from wanxing_config import save_research_response_enabled, wanxing_research_mode
 from wind_config import load_wind_config, save_wind_response_enabled
-from wanxing_config import save_research_response_enabled
 
 ProgressCallback = Callable[[int, str], None]
 
@@ -75,7 +79,6 @@ class MatchOrchestrator:
         on_progress: Optional[ProgressCallback] = None,
     ) -> Dict[str, Any]:
         started = time.monotonic()
-        research_mode = "wind_alice" if deep_research else "wanxing"
 
         def prog(pct: int, msg: str) -> None:
             if on_progress:
@@ -95,7 +98,8 @@ class MatchOrchestrator:
         query_ctx = await QueryParserAgent(parser_llm).parse(full_query, subject_type=subject_type)
         apply_stock_code_from_query(query_ctx)
 
-        if not deep_research and query_ctx.subject_type in ("stock", "auto"):
+        is_sector = query_ctx.subject_type == "sector"
+        if not deep_research and not is_sector and query_ctx.subject_type in ("stock", "auto"):
             if not query_ctx.stock_code:
                 prog(10, f"万行名称转代码: {query_ctx.subject}...")
                 code, record = resolve_stock_code_by_name(query_ctx.subject)
@@ -113,9 +117,10 @@ class MatchOrchestrator:
             prog(research_prog_state["pct"], msg)
 
         if deep_research:
-            prog(15, "Wind Alice 深度调研...")
+            prog(15, "Wind 结构化检索 + Alice 深度调研...")
         else:
-            prog(15, "万行取数...")
+            wx_mode = wanxing_research_mode()
+            prog(15, "万行 MCP 取数..." if wx_mode == "mcp" else "万行金融搜索取数...")
 
         facts = fetch_research_facts(
             query_ctx,
@@ -123,6 +128,7 @@ class MatchOrchestrator:
             context=context,
             on_progress=research_progress,
         )
+        research_mode = facts.research_mode or ("wind_alice" if deep_research else "wanxing_search")
 
         prog(55, "加载 logic_cards 索引...")
         cards = load_registry_cards(force_rescan=True)
@@ -133,8 +139,37 @@ class MatchOrchestrator:
         top_k = int(self.wind_cfg.get("match_top_k") or 10)
         matcher = LogicMatcher(match_llm, threshold=threshold, top_k=top_k)
 
-        prog(65, "向量召回 + LLM 重排...")
-        match_result = await matcher.match(query_ctx, facts, cards)
+        if is_sector:
+            prog(65, "板块 logic 匹配（向量召回 + LLM 重排）...")
+            match_result = await matcher.match(query_ctx, facts, cards)
+        else:
+            has_business_mix = bool(facts.research_raw_sections.get("business_mix"))
+            if not has_business_mix:
+                for item in facts.facts:
+                    if item.fact_type == "business_mix" and item.text.strip():
+                        has_business_mix = True
+                        break
+            if not has_business_mix:
+                prog(65, "业务占比缺失，整股 logic 匹配...")
+                match_result = await matcher.match(query_ctx, facts, cards)
+            else:
+                prog(60, "抽取业务线...")
+                segments = await BusinessSegmentExtractor(match_llm).extract(query_ctx, facts)
+                facts.business_segments = segments
+                prog(65, "各业务线 logic 评分...")
+                seg_scores = await BusinessSegmentMatcher(match_llm, top_k=top_k).score_all(
+                    segments, cards, facts
+                )
+                prog(70, "LLM 综合评分...")
+                composite = await StockScoreSynthesizer(match_llm).synthesize(
+                    seg_scores, facts, cards, query_ctx, threshold=threshold
+                )
+                facts.segment_match = composite
+                prog(72, "资产负债表风险分析（不计分）...")
+                facts.balance_sheet_risks = await BalanceSheetRiskAnalyzer(match_llm).analyze(facts)
+                match_result = StockScoreSynthesizer.to_match_result(
+                    composite, cards, facts, query_ctx, threshold=threshold
+                )
 
         selected_card = card_by_id(cards, match_result.selected_logic_id) if match_result.selected_logic_id else None
 
@@ -153,7 +188,16 @@ class MatchOrchestrator:
             "wind_status": facts.wind_status,
             "registry_card_count": len(cards),
             "embedding_version": matcher.index.version,
+            "subject_type": query_ctx.subject_type,
         }
+        if facts.segment_match:
+            meta["segment_match_summary"] = {
+                "composite_logic_id": facts.segment_match.composite_logic_id,
+                "composite_score": facts.segment_match.composite_score,
+                "segment_count": len(facts.segment_match.segment_scores),
+            }
+        if facts.balance_sheet_risks:
+            meta["balance_sheet_risk_count"] = len(facts.balance_sheet_risks)
         result = AnalysisResult(
             subject=query_ctx.subject,
             query=query_ctx,
@@ -184,14 +228,19 @@ class MatchOrchestrator:
         research_mode = result.meta.get("research_mode") or result.facts.research_mode
         provider_saved = False
 
-        if research_mode == "wanxing" and save_research_response_enabled():
+        if research_mode.startswith("wanxing") and save_research_response_enabled():
             payload = {
                 "subject": result.subject,
                 "research_mode": research_mode,
                 "wind_status": result.facts.wind_status,
                 "query": result.query.to_dict(),
                 "calls": result.facts.wind_calls,
+                "research_raw_sections": result.facts.research_raw_sections,
             }
+            if result.facts.segment_match:
+                payload["segment_match"] = result.facts.segment_match.to_dict()
+            if result.facts.balance_sheet_risks:
+                payload["balance_sheet_risks"] = [r.to_dict() for r in result.facts.balance_sheet_risks]
             with wanxing_path.open("w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
             provider_saved = True
@@ -205,6 +254,7 @@ class MatchOrchestrator:
                 "wind_status": result.facts.wind_status,
                 "query": result.query.to_dict(),
                 "calls": result.facts.wind_calls,
+                "research_raw_sections": result.facts.research_raw_sections,
             }
             with alice_json_path.open("w", encoding="utf-8") as f:
                 json.dump(alice_payload, f, ensure_ascii=False, indent=2)
@@ -227,7 +277,7 @@ class MatchOrchestrator:
             "provider_saved": provider_saved,
             "elapsed_sec": result.meta.get("elapsed_sec"),
         }
-        if research_mode == "wanxing" and provider_saved:
+        if research_mode.startswith("wanxing") and provider_saved:
             output["wanxing"] = wanxing_path.name
         if research_mode == "wind_alice" and provider_saved:
             output["alice"] = alice_md_path.name if result.facts.research_raw_md else None

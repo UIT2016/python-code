@@ -31,6 +31,62 @@ class QueryContext:
 
 
 @dataclass
+class BusinessSegment:
+    name: str
+    revenue_share: str = ""
+    summary: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"name": self.name, "revenue_share": self.revenue_share, "summary": self.summary}
+
+
+@dataclass
+class SegmentLogicScore:
+    segment: str
+    logic_id: str
+    score: int
+    trigger_hits: List[str] = field(default_factory=list)
+    reason: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "segment": self.segment,
+            "logic_id": self.logic_id,
+            "score": self.score,
+            "trigger_hits": self.trigger_hits,
+            "reason": self.reason,
+        }
+
+
+@dataclass
+class BalanceSheetRisk:
+    factor: str
+    evidence: str
+    severity: str = "medium"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"factor": self.factor, "evidence": self.evidence, "severity": self.severity}
+
+
+@dataclass
+class StockCompositeMatch:
+    segment_scores: List[SegmentLogicScore]
+    composite_logic_id: str
+    composite_score: int
+    synthesis_reason: str = ""
+    runner_up: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "segment_scores": [s.to_dict() for s in self.segment_scores],
+            "composite_logic_id": self.composite_logic_id,
+            "composite_score": self.composite_score,
+            "synthesis_reason": self.synthesis_reason,
+            "runner_up": self.runner_up,
+        }
+
+
+@dataclass
 class FactItem:
     fact_type: str
     text: str
@@ -50,6 +106,10 @@ class FactBundle:
     research_mode: str = "wanxing"
     research_raw_md: str = ""
     wind_calls: List[Dict[str, Any]] = field(default_factory=list)
+    business_segments: List[BusinessSegment] = field(default_factory=list)
+    segment_match: Optional[StockCompositeMatch] = None
+    balance_sheet_risks: List[BalanceSheetRisk] = field(default_factory=list)
+    research_raw_sections: Dict[str, str] = field(default_factory=dict)
 
     @property
     def research_status(self) -> str:
@@ -63,6 +123,10 @@ class FactBundle:
             "wind_status": self.wind_status,
             "research_mode": self.research_mode,
             "has_research_raw": bool(self.research_raw_md),
+            "business_segments": [s.to_dict() for s in self.business_segments],
+            "segment_match": self.segment_match.to_dict() if self.segment_match else None,
+            "balance_sheet_risks": [r.to_dict() for r in self.balance_sheet_risks],
+            "research_raw_sections": self.research_raw_sections,
         }
 
 

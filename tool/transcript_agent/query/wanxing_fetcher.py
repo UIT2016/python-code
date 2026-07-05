@@ -343,7 +343,8 @@ def _parse_tool_response(intent: str, payload: Any) -> List[FactItem]:
     return items
 
 
-class WanxingFetcher:
+class WanxingMcpFetcher:
+    """万行 MCP 结构化取数（后备模式）。"""
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         from wanxing_config import load_wanxing_config
 
@@ -372,46 +373,36 @@ class WanxingFetcher:
                 on_progress(msg)
 
         if not self.api_key:
-            bundle = self._degraded(query, "未配置 WANXING_API_KEY")
-            bundle.research_mode = "wanxing"
+            bundle = _degraded_bundle(query, "未配置 WANXING_API_KEY", mode="wanxing_mcp")
+            bundle.research_mode = "wanxing_mcp"
             return bundle
 
-        apply_stock_code_from_query(query)
         client = self._client_or_raise()
-        if _is_valid_stock_code(query.stock_code):
-            stock_code = query.stock_code.strip()
-            if query.stock_code_resolve:
-                research_calls.append(query.stock_code_resolve)
-            else:
-                research_calls.append(
-                    {
-                        "intent": "resolve_code",
-                        "tool_name": "get_stock_code",
-                        "arguments": {"stock_name": query.subject},
-                        "response": {"stock_code": stock_code},
-                        "stock_code": stock_code,
-                        "error": None,
-                    }
-                )
-        else:
-            prog("万行名称转代码...")
-            stock_code, resolve_record = resolve_stock_code_by_name(query.subject, client=client)
-            query.stock_code = stock_code
-            query.stock_code_resolve = resolve_record
-            research_calls.append(resolve_record)
-
-        if not _is_valid_stock_code(stock_code):
-            bundle = self._degraded(
-                query,
-                f"未能将「{query.subject}」解析为股票代码（如 600170.SH），公司简介/财务/公告等接口无法查询",
-            )
-            bundle.wind_calls = research_calls
-            bundle.research_mode = "wanxing"
-            return bundle
-
         facts: List[FactItem] = []
         errors: List[str] = []
-        tool_calls = _build_stock_tool_calls(query, stock_code)
+        research_calls: List[Dict[str, Any]] = []
+
+        if query.subject_type == "sector":
+            sector = query.sector_hint or query.subject
+            tool_calls: List[Tuple[str, str, Dict[str, Any]]] = [
+                ("sector_overview", "smart_stock_picking", {"searchstring": f"{sector}板块龙头 景气度"}),
+                ("sector_catalysts", "smart_stock_picking", {"searchstring": f"{sector}近期催化 风险"}),
+            ]
+        else:
+            apply_stock_code_from_query(query)
+            if not _is_valid_stock_code(query.stock_code):
+                prog("万行名称转代码...")
+            stock_code, research_calls = _resolve_code_for_query(query, self)
+            if not _is_valid_stock_code(stock_code):
+                bundle = _degraded_bundle(
+                    query,
+                    f"未能将「{query.subject}」解析为股票代码（如 600170.SH），公司简介/财务/公告等接口无法查询",
+                    mode="wanxing_mcp",
+                )
+                bundle.wind_calls = research_calls
+                return bundle
+            tool_calls = _build_stock_tool_calls(query, stock_code)
+
         total = len(tool_calls)
 
         for idx, (intent, tool_name, args) in enumerate(tool_calls, start=1):
@@ -433,18 +424,21 @@ class WanxingFetcher:
             research_calls.append(call_record)
 
         if not facts:
-            bundle = self._degraded(query, "; ".join(errors) if errors else "万行无返回数据")
+            bundle = _degraded_bundle(query, "; ".join(errors) if errors else "万行无返回数据", mode="wanxing_mcp")
             bundle.wind_calls = research_calls
-            bundle.research_mode = "wanxing"
             return bundle
 
-        summary = self._build_summary(query, facts, stock_code=stock_code)
+        summary = self._build_summary(
+            query,
+            facts,
+            stock_code=query.stock_code if query.subject_type != "sector" else "",
+        )
         return FactBundle(
             subject=query.subject,
             facts=facts,
             summary_for_match=summary,
             wind_status="ok",
-            research_mode="wanxing",
+            research_mode="wanxing_mcp",
             wind_calls=research_calls,
         )
 
@@ -461,16 +455,48 @@ class WanxingFetcher:
             parts.append(f"[{fact.fact_type}] {fact.text[:120]}")
         return "；".join(parts)[:1200]
 
-    @staticmethod
-    def _degraded(query: QueryContext, reason: str) -> FactBundle:
-        summary_parts = [f"标的:{query.subject}", f"查询:{query.raw_query}"]
-        if query.event_keywords:
-            summary_parts.append("事件:" + ",".join(query.event_keywords))
-        summary_parts.append(f"万行降级:{reason}")
-        return FactBundle(
-            subject=query.subject,
-            facts=[FactItem(fact_type="query", text=query.raw_query, source="user")],
-            summary_for_match="；".join(summary_parts)[:800],
-            wind_status="degraded",
-            research_mode="wanxing",
-        )
+
+def _resolve_code_for_query(
+    query: QueryContext,
+    fetcher: "WanxingMcpFetcher",
+) -> Tuple[str, List[Dict[str, Any]]]:
+    research_calls: List[Dict[str, Any]] = []
+    if _is_valid_stock_code(query.stock_code):
+        stock_code = query.stock_code.strip()
+        if query.stock_code_resolve:
+            research_calls.append(query.stock_code_resolve)
+        else:
+            research_calls.append(
+                {
+                    "intent": "resolve_code",
+                    "tool_name": "get_stock_code",
+                    "arguments": {"stock_name": query.subject},
+                    "response": {"stock_code": stock_code},
+                    "stock_code": stock_code,
+                    "error": None,
+                }
+            )
+        return stock_code, research_calls
+    client = fetcher._client_or_raise()
+    stock_code, resolve_record = resolve_stock_code_by_name(query.subject, client=client)
+    query.stock_code = stock_code
+    query.stock_code_resolve = resolve_record
+    research_calls.append(resolve_record)
+    return stock_code, research_calls
+
+
+def _degraded_bundle(query: QueryContext, reason: str, *, mode: str = "wanxing_mcp") -> FactBundle:
+    summary_parts = [f"标的:{query.subject}", f"查询:{query.raw_query}"]
+    if query.event_keywords:
+        summary_parts.append("事件:" + ",".join(query.event_keywords))
+    summary_parts.append(f"万行降级:{reason}")
+    return FactBundle(
+        subject=query.subject,
+        facts=[FactItem(fact_type="query", text=query.raw_query, source="user")],
+        summary_for_match="；".join(summary_parts)[:800],
+        wind_status="degraded",
+        research_mode=mode,
+    )
+
+
+WanxingFetcher = WanxingMcpFetcher
