@@ -136,10 +136,13 @@ class WindSearchFetcher:
 
     @staticmethod
     def _degraded(query: QueryContext, reason: str) -> FactBundle:
+        parts = [f"标的:{query.subject}", f"Wind降级:{reason}"]
+        if query.stock_code:
+            parts.insert(1, f"代码:{query.stock_code}")
         return FactBundle(
             subject=query.subject,
             facts=[FactItem(fact_type="query", text=query.raw_query, source="user")],
-            summary_for_match=f"标的:{query.subject}；Wind降级:{reason}",
+            summary_for_match="；".join(parts)[:800],
             wind_status="degraded",
             research_mode="wind_search",
         )

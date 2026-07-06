@@ -99,7 +99,7 @@ class MatchOrchestrator:
         apply_stock_code_from_query(query_ctx)
 
         is_sector = query_ctx.subject_type == "sector"
-        if not deep_research and not is_sector and query_ctx.subject_type in ("stock", "auto"):
+        if not is_sector and query_ctx.subject_type in ("stock", "auto"):
             if not query_ctx.stock_code:
                 prog(10, f"万行名称转代码: {query_ctx.subject}...")
                 code, record = resolve_stock_code_by_name(query_ctx.subject)

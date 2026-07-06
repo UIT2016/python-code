@@ -9,7 +9,9 @@ import requests
 
 from transcript_agent.query.models import FactBundle, FactItem, QueryContext
 
-# 与 Wind 官方 wind-mcp-skill scripts/cli.mjs 保持一致
+_SSE_BLOCK_RE = re.compile(r"\r?\n\r?\n")
+
+# 与 AIFin Market wind-mcp-skill 文档一致：各 server_type 直连 mcp.wind.com.cn
 DEFAULT_MCP_SERVERS: Dict[str, str] = {
     "stock_data": "https://mcp.wind.com.cn/vserver_stock_data/mcp/",
     "fund_data": "https://mcp.wind.com.cn/vserver_fund_data/mcp/",
@@ -78,15 +80,43 @@ def json_dumps_safe(obj: Any) -> str:
         return str(obj)
 
 
+def _collect_sse_data_payloads(text: str) -> List[str]:
+    payloads: List[str] = []
+    for block in _SSE_BLOCK_RE.split(text):
+        block = block.strip()
+        if not block:
+            continue
+        lines = block.splitlines()
+        idx = 0
+        while idx < len(lines):
+            line = lines[idx]
+            if not line.startswith("data:"):
+                idx += 1
+                continue
+            chunk = line[5:]
+            if chunk.startswith(" "):
+                chunk = chunk[1:]
+            idx += 1
+            while idx < len(lines):
+                nxt = lines[idx]
+                if nxt.startswith("data:") or nxt.startswith("event:") or nxt.startswith(":"):
+                    break
+                chunk += nxt
+                idx += 1
+            chunk = chunk.strip()
+            if chunk and chunk != "[DONE]":
+                payloads.append(chunk)
+    return payloads
+
+
 def _parse_sse_or_json(text: str) -> Dict[str, Any]:
-    for line in text.splitlines():
-        line = line.strip()
-        if not line.startswith("data:"):
+    for payload in reversed(_collect_sse_data_payloads(text)):
+        try:
+            parsed = json.loads(payload)
+        except json.JSONDecodeError:
             continue
-        payload = line[5:].strip()
-        if not payload or payload == "[DONE]":
-            continue
-        return json.loads(payload)
+        if isinstance(parsed, dict) and ("result" in parsed or "error" in parsed):
+            return parsed
     text = text.strip()
     if text:
         return json.loads(text)
@@ -99,10 +129,7 @@ class WindAIFinClient:
 
         self.config = config or load_wind_config()
         self.api_key = (self.config.get("wind_api_key") or "").strip()
-        self.servers = dict(DEFAULT_MCP_SERVERS)
-        custom = self.config.get("wind_mcp_servers")
-        if isinstance(custom, dict):
-            self.servers.update({k: str(v) for k, v in custom.items() if v})
+        self.servers = dict(self.config.get("wind_mcp_servers") or DEFAULT_MCP_SERVERS)
 
     def fetch(self, query: QueryContext) -> FactBundle:
         wind_calls: List[Dict[str, Any]] = []
