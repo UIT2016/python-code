@@ -1,0 +1,26 @@
+# 投资逻辑大类参考（提取时按原文识别，勿强行套用未出现的框架）
+families:
+  - id: chaojingqi_speculation
+    name: 超景气价值投机
+    examples: [笨韭单击, 笨韭双击, 现象级事件, 高景气赛道]
+  - id: chaojingqi_value
+    name: 超景气价值投资
+    examples: [现象级事件识别, 四要素, 政策五要素]
+  - id: distress_reversal
+    name: 困境反转
+    examples: [产能出清, 反内卷, 供给收缩, 价格触底跳涨, 行业亏损收窄]
+  - id: mean_reversion
+    name: 均值回归
+    examples: [极端低估, 政策催化反弹, 消费板块修复]
+  - id: liquidity_macro
+    name: 流动性宏观
+    examples: [成交额, 货币政策, 市场buff, 仓位系数]
+  - id: stock_scoring
+    name: 个股评分选股
+    examples: [业务纯度, 龙头地位, 辨识度, 流动性系数]
+  - id: trading_discipline
+    name: 交易纪律
+    examples: [停止赌博式交易, 固定模式, 趋势止盈]
+  - id: risk_avoidance
+    name: 风险规避
+    examples: [追热点, 听消息, 价值陷阱, 超前定价]

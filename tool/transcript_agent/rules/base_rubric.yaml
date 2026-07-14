@@ -1,0 +1,58 @@
+pass_threshold: 85
+min_fidelity: 16
+
+dimensions:
+  - id: fidelity
+    weight: 20
+    label: 忠实原文
+    checks:
+      - 每条 logic_card 必须有 evidence_quotes
+      - 不得编造原文未出现的个股、数据、逻辑框架
+      - logic_id 与 logic_name 必须对应原文实际表述
+  - id: card_quality
+    weight: 20
+    label: 逻辑卡质量
+    checks:
+      - 每种独立投资逻辑单独成卡，便于 RAG 检索匹配
+      - triggers / veto_conditions / keywords 具体可匹配，非空泛形容词
+      - analysis_steps 与 answer_sections 可指导后续 Agent 按框架回答
+  - id: investment_value
+    weight: 20
+    label: 投资价值
+    checks:
+      - 保留定性框架、因果链、板块/案例
+      - 多逻辑并存时 logic_family 分类正确
+  - id: structure
+    weight: 20
+    label: 结构完整
+    checks:
+      - core_thesis 清晰
+      - logic_cards 非空且字段齐全
+  - id: noise_removal
+    weight: 20
+    label: 噪音剔除
+    checks:
+      - 剔除 B 站口播寒暄、求关注
+      - 剔除重复口癖与无关闲聊
+
+forbidden_patterns:
+  - 必涨
+  - 稳赚
+  - 神秘代码
+  - 内幕消息
+
+required_fields:
+  - core_thesis
+  - logic_cards
+
+logic_card_required_fields:
+  - logic_id
+  - logic_name
+  - logic_family
+  - summary
+  - triggers
+  - veto_conditions
+  - analysis_steps
+  - answer_sections
+  - keywords
+  - evidence_quotes

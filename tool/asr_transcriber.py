@@ -4,17 +4,21 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 try:
     import requests
 except ImportError:
-    raise SystemExit("缺少 requests，请先执行: pip install -r tool/requirements.txt")
+    requests = None  # type: ignore
+
+ProgressCallback = Callable[[int, str], None]
 
 BASE_DIR = Path(__file__).resolve().parent
 API_KEY_FILE = BASE_DIR / "api_key.local.json"
 TRANSCRIPT_DIR = BASE_DIR / "transcripts"
+DOWNLOAD_DIR = BASE_DIR / "download"
 ASR_MODEL = "qwen3-asr-flash-filetrans"
 POLL_INTERVAL_SEC = 3
 POLL_TIMEOUT_SEC = 3600
@@ -26,7 +30,18 @@ class AsrError(Exception):
     pass
 
 
+@dataclass
+class TranscribeResult:
+    txt_path: Path
+    file_name: str
+    elapsed_sec: float
+    timed_path: Optional[Path] = None
+    json_path: Optional[Path] = None
+
+
 def load_api_config() -> Dict[str, str]:
+    if requests is None:
+        raise AsrError("缺少 requests，请先执行: pip install -r tool/requirements.txt")
     if not API_KEY_FILE.exists():
         example = BASE_DIR / "api_key.example.json"
         hint = f"请复制 {example.name} 为 {API_KEY_FILE.name} 并填入 api_key"
@@ -40,6 +55,22 @@ def load_api_config() -> Dict[str, str]:
     return {"api_key": api_key, "base_url": base_url}
 
 
+def resolve_audio_path(relative_or_name: str) -> Path:
+    raw = relative_or_name.strip()
+    path = Path(raw)
+    if not path.is_absolute():
+        path = BASE_DIR / raw
+    path = path.resolve()
+    download_root = DOWNLOAD_DIR.resolve()
+    if path.parent != download_root:
+        raise AsrError("仅允许转写 download 目录下的音频文件")
+    if not path.is_file():
+        raise AsrError(f"音频文件不存在: {path.name}")
+    if path.suffix.lower() not in AUDIO_EXTENSIONS:
+        raise AsrError(f"不支持的音频格式: {path.suffix}")
+    return path
+
+
 def _auth_headers(api_key: str, *, resolve_oss: bool = False) -> Dict[str, str]:
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -51,7 +82,6 @@ def _auth_headers(api_key: str, *, resolve_oss: bool = False) -> Dict[str, str]:
 
 
 def upload_local_file(api_key: str, base_url: str, file_path: Path) -> str:
-    """上传本地文件到 DashScope 临时 OSS，返回 oss:// URL。"""
     policy_url = f"{base_url}/uploads"
     resp = requests.get(
         policy_url,
@@ -103,10 +133,18 @@ def submit_transcription_task(api_key: str, base_url: str, file_url: str) -> str
     return task_id
 
 
-def poll_task_result(api_key: str, base_url: str, task_id: str) -> Dict[str, Any]:
+def poll_task_result(
+    api_key: str,
+    base_url: str,
+    task_id: str,
+    on_progress: Optional[ProgressCallback] = None,
+    poll_base: int = 25,
+    poll_span: int = 65,
+) -> Dict[str, Any]:
     url = f"{base_url}/tasks/{task_id}"
     headers = _auth_headers(api_key)
     deadline = time.monotonic() + POLL_TIMEOUT_SEC
+    tick = 0
     while time.monotonic() < deadline:
         resp = requests.get(url, headers=headers, timeout=60)
         if resp.status_code != 200:
@@ -114,11 +152,17 @@ def poll_task_result(api_key: str, base_url: str, task_id: str) -> Dict[str, Any
         data = resp.json()
         output = data.get("output") or {}
         status = (output.get("task_status") or "").upper()
+        if on_progress:
+            pct = poll_base + min(poll_span - 5, tick * 3)
+            on_progress(pct, f"云端识别中 ({status or 'PENDING'})...")
         if status == "SUCCEEDED":
+            if on_progress:
+                on_progress(poll_base + poll_span, "识别完成，正在下载结果...")
             return data
         if status in ("FAILED", "UNKNOWN"):
             message = output.get("message") or data.get("message") or resp.text
             raise AsrError(f"转写任务失败 ({status}): {message}")
+        tick += 1
         time.sleep(POLL_INTERVAL_SEC)
     raise AsrError(f"转写超时（>{POLL_TIMEOUT_SEC} 秒），task_id={task_id}")
 
@@ -136,21 +180,24 @@ def _format_ms(ms: int) -> str:
 
 
 def extract_texts(result: Dict[str, Any]) -> tuple[str, str]:
-    """返回 (纯文本, 带时间戳文本)。"""
     transcripts = result.get("transcripts") or []
     plain_parts: List[str] = []
     timed_parts: List[str] = []
     for track in transcripts:
-        text = (track.get("text") or "").strip()
-        if text:
-            plain_parts.append(text)
-        for sentence in track.get("sentences") or []:
-            sent_text = (sentence.get("text") or "").strip()
-            if not sent_text:
-                continue
-            begin = sentence.get("begin_time", 0)
-            end = sentence.get("end_time", 0)
-            timed_parts.append(f"[{_format_ms(begin)}-{_format_ms(end)}] {sent_text}")
+        sentences = track.get("sentences") or []
+        if sentences:
+            for sentence in sentences:
+                sent_text = (sentence.get("text") or "").strip()
+                if not sent_text:
+                    continue
+                plain_parts.append(sent_text)
+                begin = sentence.get("begin_time", 0)
+                end = sentence.get("end_time", 0)
+                timed_parts.append(f"[{_format_ms(begin)}-{_format_ms(end)}] {sent_text}")
+        else:
+            text = (track.get("text") or "").strip()
+            if text:
+                plain_parts.append(text)
     plain = "\n".join(plain_parts)
     timed = "\n".join(timed_parts) if timed_parts else plain
     return plain, timed
@@ -161,44 +208,115 @@ def save_transcript(
     plain_text: str,
     timed_text: str,
     raw_result: Optional[Dict[str, Any]] = None,
-) -> Path:
+    *,
+    include_timed: bool = False,
+    include_json: bool = False,
+) -> tuple[Path, Optional[Path], Optional[Path]]:
     TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
     stem = source_file.stem
     txt_path = TRANSCRIPT_DIR / f"{stem}.txt"
-    timed_path = TRANSCRIPT_DIR / f"{stem}.timed.txt"
     txt_path.write_text(plain_text, encoding="utf-8")
-    timed_path.write_text(timed_text, encoding="utf-8")
-    if raw_result is not None:
+    timed_path = None
+    json_path = None
+    if include_timed:
+        timed_path = TRANSCRIPT_DIR / f"{stem}.timed.txt"
+        timed_path.write_text(timed_text, encoding="utf-8")
+    if include_json and raw_result is not None:
         json_path = TRANSCRIPT_DIR / f"{stem}.json"
         json_path.write_text(json.dumps(raw_result, ensure_ascii=False, indent=2), encoding="utf-8")
-    return txt_path
+    return txt_path, timed_path, json_path
 
 
-def transcribe_audio_file(audio_path: Path) -> Path:
-    if not audio_path.exists():
-        raise AsrError(f"音频文件不存在: {audio_path}")
+def transcribe_audio_file(
+    audio_path: Path,
+    *,
+    include_timed: bool = False,
+    include_json: bool = False,
+    on_progress: Optional[ProgressCallback] = None,
+) -> TranscribeResult:
     if audio_path.suffix.lower() not in AUDIO_EXTENSIONS:
         raise AsrError(f"不支持的音频格式: {audio_path.suffix}")
 
+    started = time.monotonic()
     config = load_api_config()
     api_key = config["api_key"]
     base_url = config["base_url"]
 
-    print("\n正在上传音频到 DashScope 临时存储...")
+    if on_progress:
+        on_progress(5, "正在上传音频...")
     oss_url = upload_local_file(api_key, base_url, audio_path)
-    print("上传完成，正在提交转写任务...")
+    if on_progress:
+        on_progress(20, "正在提交转写任务...")
     task_id = submit_transcription_task(api_key, base_url, oss_url)
-    print(f"任务已提交 (task_id: {task_id})，等待识别结果...")
-    task_result = poll_task_result(api_key, base_url, task_id)
+    task_result = poll_task_result(api_key, base_url, task_id, on_progress=on_progress)
     output = task_result.get("output") or {}
     result_block = output.get("result") or {}
     transcription_url = result_block.get("transcription_url")
     if not transcription_url:
         raise AsrError(f"未获取到 transcription_url: {json.dumps(task_result, ensure_ascii=False)}")
-    print("识别完成，正在下载并保存文字...")
+    if on_progress:
+        on_progress(92, "正在保存转写结果...")
     raw = fetch_transcription_json(transcription_url)
     plain, timed = extract_texts(raw)
     if not plain.strip():
         raise AsrError("识别结果为空")
-    saved = save_transcript(audio_path, plain, timed, raw)
-    return saved
+    txt_path, timed_path, json_path = save_transcript(
+        audio_path,
+        plain,
+        timed,
+        raw,
+        include_timed=include_timed,
+        include_json=include_json,
+    )
+    elapsed = round(time.monotonic() - started, 1)
+    if on_progress:
+        on_progress(100, f"完成，耗时 {elapsed}s")
+    return TranscribeResult(
+        txt_path=txt_path,
+        file_name=audio_path.name,
+        elapsed_sec=elapsed,
+        timed_path=timed_path,
+        json_path=json_path,
+    )
+
+
+def transcribe_audio_files(
+    audio_paths: List[Path],
+    *,
+    include_timed: bool = False,
+    include_json: bool = False,
+    on_progress: Optional[ProgressCallback] = None,
+) -> List[TranscribeResult]:
+    total = len(audio_paths)
+    if total == 0:
+        raise AsrError("未选择任何音频文件")
+    results: List[TranscribeResult] = []
+    batch_started = time.monotonic()
+    for idx, path in enumerate(audio_paths):
+        base_pct = int(idx * 100 / total)
+
+        def file_progress(
+            pct: int,
+            msg: str,
+            _base: int = base_pct,
+            _idx: int = idx,
+            _name: str = path.name,
+        ) -> None:
+            if on_progress:
+                overall = _base + int(pct / total)
+                on_progress(overall, f"[{_idx + 1}/{total}] {_name}: {msg}")
+
+        if on_progress:
+            on_progress(base_pct, f"[{idx + 1}/{total}] 开始转写 {path.name}")
+        results.append(
+            transcribe_audio_file(
+                path,
+                include_timed=include_timed,
+                include_json=include_json,
+                on_progress=file_progress,
+            )
+        )
+    if on_progress:
+        elapsed = round(time.monotonic() - batch_started, 1)
+        on_progress(100, f"批量完成，共 {total} 个文件，总耗时 {elapsed}s")
+    return results

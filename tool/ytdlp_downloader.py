@@ -1,32 +1,30 @@
 #!/usr/bin/env python3
-"""交互式视频/音频下载工具（基于 yt-dlp，支持 B 站等站点）。"""
+"""视频/音频下载（基于 yt-dlp，支持 B 站等站点）。"""
 
 from __future__ import annotations
 
 import shutil
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+ProgressCallback = Callable[[int, str], None]
+
 try:
     import yt_dlp
 except ImportError:
-    print("缺少依赖，请先执行: pip install -r tool/requirements.txt")
-    sys.exit(1)
-
-try:
-    from tqdm import tqdm
-except ImportError:
-    print("缺少 tqdm，请先执行: pip install -r tool/requirements.txt")
-    sys.exit(1)
+    yt_dlp = None  # type: ignore
 
 BASE_DIR = Path(__file__).resolve().parent
 DOWNLOAD_DIR = BASE_DIR / "download"
-BILIBILI_COOKIES_FILE = BASE_DIR / "bilibili_cookies.local.txt"
+DEFAULT_COOKIE_FILE = BASE_DIR / "bilibili_cookies.local.txt"
 AUDIO_EXTENSIONS = {".mp3", ".m4a", ".wav", ".opus", ".ogg", ".flac", ".aac", ".wma"}
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".webm", ".flv", ".avi", ".mov"}
+
+
+class DownloadError(Exception):
+    pass
 
 
 @dataclass
@@ -36,6 +34,11 @@ class FormatOption:
     format_spec: str
     audio_codec: Optional[str] = None
     need_ffmpeg: bool = False
+
+
+def _ensure_ytdlp() -> None:
+    if yt_dlp is None:
+        raise DownloadError("缺少 yt-dlp，请先执行: pip install -r tool/requirements.txt")
 
 
 def _human_size(num: Optional[int]) -> str:
@@ -50,33 +53,27 @@ def _human_size(num: Optional[int]) -> str:
     return f"{num}B"
 
 
-def _prompt_url() -> str:
-    while True:
-        url = input("\n请输入视频 URL（B 站示例: https://www.bilibili.com/video/BVxxx）: ").strip()
-        if url:
-            return url
-        print("URL 不能为空，请重新输入。")
-
-
 def _is_bilibili_url(url: str) -> bool:
     return "bilibili.com" in url.lower()
 
 
-def _resolve_bilibili_cookiefile() -> Optional[Path]:
-    if BILIBILI_COOKIES_FILE.is_file():
-        return BILIBILI_COOKIES_FILE
-    return None
+def resolve_cookiefile(cookie_file: Optional[str] = None) -> Optional[Path]:
+    """解析 Cookie 文件路径（相对 tool 目录或绝对路径）。"""
+    if cookie_file and cookie_file.strip():
+        path = Path(cookie_file.strip())
+        if not path.is_absolute():
+            path = BASE_DIR / path
+        return path if path.is_file() else None
+    return DEFAULT_COOKIE_FILE if DEFAULT_COOKIE_FILE.is_file() else None
 
 
 def _audio_format_spec(url: str) -> str:
-    """B 站（尤其充电视频）用 bv*+ba 合并轨再抽音频，避免 bestaudio 只下到试看片段。"""
     if _is_bilibili_url(url):
         return "bv*+ba/b"
     return "bestaudio/best"
 
 
-def _base_ydl_opts(url: str) -> Dict[str, Any]:
-    """构建 yt-dlp 公共选项。B 站需携带 Origin/Referer，否则易触发 412。"""
+def base_ydl_opts(url: str, cookie_file: Optional[str] = None) -> Dict[str, Any]:
     opts: Dict[str, Any] = {
         "quiet": True,
         "no_warnings": True,
@@ -87,58 +84,32 @@ def _base_ydl_opts(url: str) -> Dict[str, Any]:
             "Origin": "https://www.bilibili.com",
             "Referer": "https://www.bilibili.com/",
         }
-        cookiefile = _resolve_bilibili_cookiefile()
+        cookiefile = resolve_cookiefile(cookie_file)
         if cookiefile:
             opts["cookiefile"] = str(cookiefile)
     return opts
 
 
-def _print_bilibili_cookie_hint(url: str) -> None:
-    if not _is_bilibili_url(url):
-        return
-    cookiefile = _resolve_bilibili_cookiefile()
-    if cookiefile:
-        print(f"\n已加载 B 站 Cookie: {cookiefile.name}")
-        return
-    example = BASE_DIR / "bilibili_cookies.example.txt"
-    print(
-        f"\n提示: 未找到 {BILIBILI_COOKIES_FILE.name}，充电视频可能只能下载试看片段。"
-        f"\n      请复制 {example.name} 为 {BILIBILI_COOKIES_FILE.name} 并填入浏览器导出的 Cookie。"
-    )
-
-
-def _extract_info(url: str) -> Dict[str, Any]:
-    print("\n正在解析视频信息，请稍候...")
-    opts = _base_ydl_opts(url)
+def extract_info(url: str, cookie_file: Optional[str] = None) -> Dict[str, Any]:
+    _ensure_ytdlp()
+    opts = base_ydl_opts(url, cookie_file)
     opts["extract_flat"] = False
     with yt_dlp.YoutubeDL(opts) as ydl:
         return ydl.extract_info(url, download=False)
 
 
-def _build_format_options(info: Dict[str, Any]) -> List[FormatOption]:
-    title = info.get("title") or "未知标题"
-    duration = info.get("duration") or 0
-    print(f"\n标题: {title}")
-    if duration:
-        total_sec = int(duration)
-        print(f"时长: {total_sec // 60:02d}:{total_sec % 60:02d}")
-
+def build_format_options(info: Dict[str, Any]) -> List[FormatOption]:
     options: List[FormatOption] = []
     idx = 1
 
     options.append(
-        FormatOption(
-            index=idx,
-            label="最佳 MP4（视频+音频，推荐）",
-            format_spec="bv*+ba/b",
-        )
+        FormatOption(index=idx, label="最佳 MP4（视频+音频，推荐）", format_spec="bv*+ba/b")
     )
     idx += 1
 
     seen_heights: set[int] = set()
-    formats = info.get("formats") or []
     video_candidates: List[Dict[str, Any]] = []
-    for fmt in formats:
+    for fmt in info.get("formats") or []:
         if fmt.get("vcodec") in (None, "none"):
             continue
         height = fmt.get("height")
@@ -168,7 +139,7 @@ def _build_format_options(info: Dict[str, Any]) -> List[FormatOption]:
     options.append(
         FormatOption(
             index=idx,
-            label="MP3 音频（需本机安装 ffmpeg）",
+            label="MP3 音频（需 ffmpeg）",
             format_spec="bestaudio/best",
             audio_codec="mp3",
             need_ffmpeg=True,
@@ -179,95 +150,70 @@ def _build_format_options(info: Dict[str, Any]) -> List[FormatOption]:
     options.append(
         FormatOption(
             index=idx,
-            label="M4A 音频（需本机安装 ffmpeg）",
+            label="M4A 音频（需 ffmpeg）",
             format_spec="bestaudio/best",
             audio_codec="m4a",
             need_ffmpeg=True,
         )
     )
-
     return options
 
 
-def _print_options(options: List[FormatOption]) -> None:
-    print("\n可选下载格式:")
-    for opt in options:
-        print(f"  [{opt.index}] {opt.label}")
-    print("  [0] 退出")
+def list_downloaded_audio() -> List[Dict[str, str]]:
+    if not DOWNLOAD_DIR.is_dir():
+        return []
+    files: List[Path] = []
+    for ext in AUDIO_EXTENSIONS:
+        files.extend(DOWNLOAD_DIR.glob(f"*{ext}"))
+    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return [{"name": p.name, "path": str(p.relative_to(BASE_DIR)).replace("\\", "/")} for p in files]
 
 
-def _choose_option(options: List[FormatOption]) -> Optional[FormatOption]:
-    valid = {opt.index for opt in options}
-    while True:
-        raw = input("\n请输入序号: ").strip()
-        if raw == "0":
-            return None
-        try:
-            choice = int(raw)
-        except ValueError:
-            print("请输入有效数字。")
-            continue
-        if choice in valid:
-            return next(opt for opt in options if opt.index == choice)
-        print(f"无效序号，请输入 0 或 {min(valid)}-{max(valid)} 之间的数字。")
-
-
-def _make_progress_hook() -> Callable[[Dict[str, Any]], None]:
-    bar: Optional[tqdm] = None
-    last_downloaded = 0
+def _make_download_hook(on_progress: Optional[ProgressCallback]) -> Callable[[Dict[str, Any]], None]:
+    last_pct = [-1]
 
     def hook(data: Dict[str, Any]) -> None:
-        nonlocal bar, last_downloaded
+        if not on_progress:
+            return
         status = data.get("status")
         if status == "downloading":
             total = data.get("total_bytes") or data.get("total_bytes_estimate")
             downloaded = data.get("downloaded_bytes") or 0
-            if bar is None:
-                desc = (data.get("info_dict") or {}).get("title") or "下载中"
-                bar = tqdm(
-                    total=total if total else None,
-                    unit="B",
-                    unit_scale=True,
-                    unit_divisor=1024,
-                    desc=desc[:40],
-                    leave=True,
-                )
-                last_downloaded = 0
-            delta = downloaded - last_downloaded
-            if delta > 0:
-                bar.update(delta)
-                last_downloaded = downloaded
-            if total and bar.total != total:
-                bar.total = total
-                bar.refresh()
+            if total:
+                pct = int(downloaded * 100 / total)
+            else:
+                pct = last_pct[0] if last_pct[0] >= 0 else 5
+            pct = max(1, min(99, pct))
+            if pct != last_pct[0]:
+                last_pct[0] = pct
+                speed = data.get("_speed_str") or ""
+                on_progress(pct, f"下载中 {data.get('_percent_str', '')} {speed}".strip())
         elif status == "finished":
-            if bar is not None:
-                if bar.total and bar.n < bar.total:
-                    bar.update(bar.total - bar.n)
-                bar.close()
-                bar = None
-                last_downloaded = 0
-            filename = data.get("filename") or ""
-            if filename:
-                print(f"\n片段完成: {Path(filename).name}")
+            on_progress(99, "正在合并文件...")
 
     return hook
 
 
-def _download(url: str, option: FormatOption) -> Path:
+def download(
+    url: str,
+    option: FormatOption,
+    cookie_file: Optional[str] = None,
+    on_progress: Optional[ProgressCallback] = None,
+) -> Path:
+    _ensure_ytdlp()
     if option.need_ffmpeg and not shutil.which("ffmpeg"):
-        print("\n错误: 未检测到 ffmpeg，无法导出 MP3/M4A。请先安装 ffmpeg 并加入 PATH。")
-        sys.exit(1)
+        raise DownloadError("未检测到 ffmpeg，无法导出 MP3/M4A")
 
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     outtmpl = str(DOWNLOAD_DIR / "%(title).80B [%(id)s].%(ext)s")
 
     ydl_opts: Dict[str, Any] = {
-        **_base_ydl_opts(url),
+        **base_ydl_opts(url, cookie_file),
         "format": _audio_format_spec(url) if option.audio_codec else option.format_spec,
         "outtmpl": outtmpl,
-        "progress_hooks": [_make_progress_hook()],
     }
+    if on_progress:
+        ydl_opts["progress_hooks"] = [_make_download_hook(on_progress)]
 
     if option.audio_codec:
         ydl_opts["postprocessors"] = [
@@ -277,9 +223,6 @@ def _download(url: str, option: FormatOption) -> Path:
                 "preferredquality": "192",
             }
         ]
-
-    print(f"\n保存目录: {DOWNLOAD_DIR}")
-    print(f"开始下载: {option.label}\n")
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
@@ -291,100 +234,74 @@ def _download(url: str, option: FormatOption) -> Path:
         return filepath
 
 
+def download_by_format_index(
+    url: str,
+    format_index: int,
+    options: List[FormatOption],
+    cookie_file: Optional[str] = None,
+    on_progress: Optional[ProgressCallback] = None,
+) -> Path:
+    selected = next((o for o in options if o.index == format_index), None)
+    if not selected:
+        raise DownloadError(f"无效的格式序号: {format_index}")
+    return download(url, selected, cookie_file=cookie_file, on_progress=on_progress)
+
+
+def _prompt_url() -> str:
+    while True:
+        url = input("\n请输入视频 URL: ").strip()
+        if url:
+            return url
+        print("URL 不能为空。")
+
+
+def _choose_option(options: List[FormatOption]) -> Optional[FormatOption]:
+    valid = {opt.index for opt in options}
+    while True:
+        raw = input("\n请输入序号 (0 取消): ").strip()
+        if raw == "0":
+            return None
+        try:
+            choice = int(raw)
+        except ValueError:
+            print("请输入有效数字。")
+            continue
+        if choice in valid:
+            return next(opt for opt in options if opt.index == choice)
+        print(f"无效序号，请输入 0 或 {min(valid)}-{max(valid)}。")
+
+
 def main() -> None:
+    if yt_dlp is None:
+        print("缺少 yt-dlp，请先执行: pip install -r tool/requirements.txt")
+        sys.exit(1)
+
     print("=" * 56)
-    print("  yt-dlp 交互式下载工具（支持 B 站 / YouTube 等）")
+    print("  yt-dlp 下载工具（CLI）— Web 版请运行: python tool/app.py")
     print("=" * 56)
 
     url = _prompt_url()
-    _print_bilibili_cookie_hint(url)
-    try:
-        info = _extract_info(url)
-    except Exception as exc:
-        print(f"\n解析失败: {exc}")
-        sys.exit(1)
-
-    options = _build_format_options(info)
-    _print_options(options)
-    selected = _choose_option(options)
-    if selected is None:
-        print("已取消。")
-        return
+    cookie = input(f"Cookie 文件 (默认 {DEFAULT_COOKIE_FILE.name}，回车跳过): ").strip() or None
+    cookie_resolved = resolve_cookiefile(cookie)
+    if _is_bilibili_url(url):
+        print(f"B 站 Cookie: {cookie_resolved.name if cookie_resolved else '未配置'}")
 
     try:
-        saved = _download(url, selected)
+        info = extract_info(url, cookie)
+        options = build_format_options(info)
+        print(f"\n标题: {info.get('title') or '未知'}")
+        for opt in options:
+            print(f"  [{opt.index}] {opt.label}")
+        selected = _choose_option(options)
+        if not selected:
+            print("已取消。")
+            return
+        saved = download(url, selected, cookie_file=cookie)
     except Exception as exc:
-        print(f"\n下载失败: {exc}")
+        print(f"\n失败: {exc}")
         sys.exit(1)
 
     print(f"\n下载完成: {saved}")
-    _maybe_transcribe(saved)
-
-
-def _prompt_yes_no(prompt: str, default: bool = True) -> bool:
-    suffix = "Y/n" if default else "y/N"
-    while True:
-        raw = input(f"\n{prompt} ({suffix}): ").strip().lower()
-        if not raw:
-            return default
-        if raw in ("y", "yes", "是"):
-            return True
-        if raw in ("n", "no", "否"):
-            return False
-        print("请输入 y 或 n。")
-
-
-def _extract_audio_from_video(video_path: Path) -> Path:
-    if not shutil.which("ffmpeg"):
-        print("\n错误: 未检测到 ffmpeg，无法从视频中提取音频。")
-        sys.exit(1)
-    output = video_path.with_suffix(".mp3")
-    print(f"\n正在从视频提取音频: {output.name}")
-    cmd = [
-        "ffmpeg", "-y", "-i", str(video_path),
-        "-vn", "-acodec", "libmp3lame", "-q:a", "2",
-        str(output),
-    ]
-    try:
-        subprocess.run(cmd, check=True, capture_output=True)
-    except subprocess.CalledProcessError as exc:
-        stderr = (exc.stderr or b"").decode("utf-8", errors="replace")
-        print(f"\n音频提取失败: {stderr or exc}")
-        sys.exit(1)
-    return output
-
-
-def _ensure_audio_path(file_path: Path) -> Path:
-    ext = file_path.suffix.lower()
-    if ext in AUDIO_EXTENSIONS:
-        return file_path
-    if ext in VIDEO_EXTENSIONS:
-        return _extract_audio_from_video(file_path)
-    print(f"\n错误: 无法识别文件类型 {ext}，请选择音频格式或 MP4 视频。")
-    sys.exit(1)
-
-
-def _maybe_transcribe(saved: Path) -> None:
-    if not _prompt_yes_no("是否使用 Qwen3-ASR 将音频转为文字并保存到文档？"):
-        return
-    if str(BASE_DIR) not in sys.path:
-        sys.path.insert(0, str(BASE_DIR))
-    try:
-        from asr_transcriber import AsrError, transcribe_audio_file
-    except ImportError:
-        print("\n错误: 无法加载 asr_transcriber 模块。")
-        return
-    try:
-        audio_path = _ensure_audio_path(saved)
-        txt_path = transcribe_audio_file(audio_path)
-    except AsrError as exc:
-        print(f"\n转写失败: {exc}")
-        return
-    except Exception as exc:
-        print(f"\n转写失败: {exc}")
-        return
-    print(f"\n文字已保存: {txt_path}")
-    print(f"带时间戳版本: {txt_path.with_name(txt_path.stem + '.timed.txt')}")
 
 
 if __name__ == "__main__":

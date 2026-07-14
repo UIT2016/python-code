@@ -1,0 +1,89 @@
+{
+  "version": "2026-07-03T23:46:32",
+  "pass_threshold": 85,
+  "min_fidelity": 16,
+  "dimensions": [
+    {
+      "id": "fidelity",
+      "weight": 20,
+      "label": "忠实原文",
+      "checks": [
+        "每条 logic_card 必须有 evidence_quotes",
+        "不得编造原文未出现的个股、数据、逻辑框架",
+        "logic_id 与 logic_name 必须对应原文实际表述"
+      ]
+    },
+    {
+      "id": "card_quality",
+      "weight": 20,
+      "label": "逻辑卡质量",
+      "checks": [
+        "每种独立投资逻辑单独成卡，便于 RAG 检索匹配",
+        "triggers / veto_conditions / keywords 具体可匹配，非空泛形容词",
+        "analysis_steps 与 answer_sections 可指导后续 Agent 按框架回答"
+      ]
+    },
+    {
+      "id": "investment_value",
+      "weight": 20,
+      "label": "投资价值",
+      "checks": [
+        "保留定性框架、因果链、板块/案例",
+        "多逻辑并存时 logic_family 分类正确"
+      ]
+    },
+    {
+      "id": "structure",
+      "weight": 20,
+      "label": "结构完整",
+      "checks": [
+        "core_thesis 清晰",
+        "logic_cards 非空且字段齐全"
+      ]
+    },
+    {
+      "id": "noise_removal",
+      "weight": 20,
+      "label": "噪音剔除",
+      "checks": [
+        "剔除 B 站口播寒暄、求关注",
+        "剔除重复口癖与无关闲聊"
+      ]
+    }
+  ],
+  "forbidden_patterns": [
+    "必涨",
+    "稳赚",
+    "神秘代码",
+    "内幕消息"
+  ],
+  "required_fields": [
+    "core_thesis",
+    "logic_cards"
+  ],
+  "logic_card_required_fields": [
+    "logic_id",
+    "logic_name",
+    "logic_family",
+    "summary",
+    "triggers",
+    "veto_conditions",
+    "analysis_steps",
+    "answer_sections",
+    "keywords",
+    "evidence_quotes"
+  ],
+  "manual_must": [
+    "按原文提取多种投资逻辑框架，不限于超景气；出现困境反转、均值回归、流动性、选股评分等须分别生成 logic_card",
+    "每条 logic_card 必须可独立用于 RAG 匹配：含 logic_id、triggers、veto_conditions、keywords",
+    "必须保留定性分析逻辑链（analysis_steps），不能只留结论",
+    "evidence_quotes 必须来自原文，案例类信息写入 examples 字段"
+  ],
+  "manual_must_not": [
+    "不得把未在原文出现的逻辑框架强行塞入（如无困境反转内容却生成 distress_reversal 卡）",
+    "不得添加原文未提及的股票代码、具体价位或 fabricated 数据",
+    "不得将 UP 主口播玩笑话当作投资建议",
+    "不得保留「求三连」「关注 UP 主」类内容",
+    "不得将不同逻辑混在一张卡里；一种可匹配框架一张卡"
+  ]
+}
