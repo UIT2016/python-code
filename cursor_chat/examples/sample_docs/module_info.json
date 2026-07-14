@@ -1,0 +1,14 @@
+{
+  "module": "cursor_chat",
+  "features": [
+    "普通聊天",
+    "多轮对话",
+    "知识库检索",
+    "流式输出"
+  ],
+  "default_model": "composer-2.5",
+  "config_files": [
+    "config.example.json",
+    "config.local.json"
+  ]
+}

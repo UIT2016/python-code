@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>cursor_chat</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --card: #1a2332;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --accent: #3d8bfd;
+      --border: #2a3548;
+      --accent2: #2d6a4f;
+      --user: #243044;
+      --assistant: #1a2a22;
+      --code: #121820;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", "PingFang SC", sans-serif;
+      background: var(--bg); color: var(--text);
+      margin: 0; padding: 1.25rem; line-height: 1.5;
+      min-height: 100vh;
+    }
+    .wrap { max-width: 920px; margin: 0 auto; display: grid; gap: 1rem; }
+    .card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 10px; padding: 1.1rem 1.25rem;
+    }
+    h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 0.35rem; }
+    .hint { font-size: 0.82rem; color: var(--muted); margin: 0; }
+    .meta { font-size: 0.78rem; color: var(--muted); margin-top: 0.5rem; word-break: break-all; }
+    label.block { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 0.3rem; }
+    textarea, input[type="text"], select {
+      width: 100%; background: var(--bg); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 0.5rem 0.65rem; font-size: 0.9rem;
+    }
+    select { width: auto; min-width: 140px; }
+    textarea { resize: vertical; min-height: 72px; font-family: inherit; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.75rem; }
+    .btn {
+      background: var(--accent); color: #fff; border: none; border-radius: 8px;
+      padding: 0.45rem 0.95rem; font-size: 0.9rem; cursor: pointer;
+    }
+    .btn.secondary { background: var(--border); }
+    .btn.green { background: var(--accent2); }
+    .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .check { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; color: var(--muted); }
+    .messages {
+      min-height: 360px; max-height: 58vh; overflow: auto;
+      display: flex; flex-direction: column; gap: 0.65rem;
+    }
+    .msg {
+      border-radius: 8px; padding: 0.7rem 0.85rem; font-size: 0.92rem;
+      word-break: break-word;
+    }
+    .msg.user { background: var(--user); align-self: flex-end; max-width: 85%; white-space: pre-wrap; }
+    .msg.assistant { background: var(--assistant); align-self: flex-start; max-width: 95%; border: 1px solid var(--border); }
+    .msg.system { background: var(--bg); align-self: stretch; border: 1px dashed var(--border); color: var(--muted); font-size: 0.85rem; white-space: pre-wrap; }
+    .msg .role { font-size: 0.75rem; color: var(--muted); margin-bottom: 0.25rem; }
+    .msg.assistant .body { white-space: normal; }
+    .msg.assistant .body.streaming { white-space: pre-wrap; }
+    .msg.assistant .body h1,
+    .msg.assistant .body h2,
+    .msg.assistant .body h3 { margin: 0.6rem 0 0.35rem; line-height: 1.3; }
+    .msg.assistant .body h1 { font-size: 1.15rem; }
+    .msg.assistant .body h2 { font-size: 1.05rem; }
+    .msg.assistant .body h3 { font-size: 0.98rem; }
+    .msg.assistant .body p { margin: 0.35rem 0; }
+    .msg.assistant .body ul, .msg.assistant .body ol { margin: 0.35rem 0; padding-left: 1.3rem; }
+    .msg.assistant .body code {
+      background: var(--code); padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.85em;
+    }
+    .msg.assistant .body pre {
+      background: var(--code); border: 1px solid var(--border); border-radius: 8px;
+      padding: 0.65rem 0.75rem; overflow: auto; margin: 0.5rem 0;
+    }
+    .msg.assistant .body pre code { background: transparent; padding: 0; }
+    .msg.assistant .body table { border-collapse: collapse; width: 100%; margin: 0.5rem 0; font-size: 0.88rem; }
+    .msg.assistant .body th, .msg.assistant .body td {
+      border: 1px solid var(--border); padding: 0.3rem 0.45rem; text-align: left;
+    }
+    .msg.assistant .body a { color: var(--accent); }
+    .toast { margin-top: 0.6rem; padding: 0.5rem 0.75rem; border-radius: 8px; font-size: 0.85rem; display: none; }
+    .toast.err { display: block; background: #3d1f24; border: 1px solid #8b3a44; }
+    .toast.ok { display: block; background: #1a2e24; border: 1px solid #2d6a4f; }
+    .hidden { display: none !important; }
+    .mode-hint { font-size: 0.82rem; color: var(--muted); margin-top: 0.45rem; }
+    .fetch-row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+    .fetch-row input[type="text"] { flex: 1; min-width: 200px; }
+    .formats { max-height: 160px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; padding: 0.4rem 0.6rem; margin-top: 0.5rem; background: var(--bg); }
+    .fmt-line { display: flex; gap: 0.45rem; align-items: flex-start; padding: 0.25rem 0; font-size: 0.82rem; border-bottom: 1px solid var(--border); }
+    .fmt-line:last-child { border-bottom: none; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>cursor_chat</h1>
+      <p class="hint">Cursor 驱动的专业任务聊天。切换模式会新建会话；助手回复支持 Markdown。</p>
+      <div class="meta" id="session-meta">会话未创建</div>
+      <div class="toolbar">
+        <label class="check">任务模式
+          <select id="task-mode"></select>
+        </label>
+        <button type="button" class="btn green" id="btn-new">新建会话</button>
+        <button type="button" class="btn secondary" id="btn-clear">清空历史</button>
+        <label class="check"><input type="checkbox" id="use-kb" /> 使用知识库</label>
+      </div>
+      <div class="mode-hint" id="mode-hint"></div>
+      <div class="toast" id="toast"></div>
+    </div>
+
+    <div class="card hidden" id="fetch-panel">
+      <label class="block" for="fetch-url">视频 / 音频 URL（检索下载）</label>
+      <div class="fetch-row">
+        <input type="text" id="fetch-url" placeholder="https://www.bilibili.com/video/BVxxxx" />
+        <button type="button" class="btn secondary" id="btn-parse">解析</button>
+        <button type="button" class="btn green" id="btn-download">下载</button>
+      </div>
+      <div class="formats hidden" id="format-list"></div>
+    </div>
+
+    <div class="card">
+      <label class="block" for="system-prompt">System Prompt（可改）</label>
+      <textarea id="system-prompt" rows="3" placeholder="当前模式的系统提示"></textarea>
+      <div class="toolbar">
+        <button type="button" class="btn secondary" id="btn-save-system">保存 System Prompt</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="messages" id="messages"></div>
+      <div class="toolbar" style="margin-top: 0.85rem; align-items: stretch;">
+        <textarea id="input" rows="3" placeholder="输入消息，Ctrl+Enter 发送" style="flex: 1;"></textarea>
+      </div>
+      <div class="toolbar">
+        <button type="button" class="btn" id="btn-send">发送（流式）</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let sessionId = null;
+    let busy = false;
+    let currentMode = "chat";
+    let selectedFormat = "bestaudio/best";
+    let modeSwitching = false;
+
+    const elMessages = document.getElementById("messages");
+    const elInput = document.getElementById("input");
+    const elToast = document.getElementById("toast");
+    const elMeta = document.getElementById("session-meta");
+    const elSystem = document.getElementById("system-prompt");
+    const elKb = document.getElementById("use-kb");
+    const elMode = document.getElementById("task-mode");
+    const elModeHint = document.getElementById("mode-hint");
+    const elFetchPanel = document.getElementById("fetch-panel");
+    const elFetchUrl = document.getElementById("fetch-url");
+    const elFormatList = document.getElementById("format-list");
+
+    if (window.marked) {
+      marked.setOptions({ breaks: true, gfm: true });
+    }
+
+    function toast(msg, ok) {
+      elToast.textContent = msg;
+      elToast.className = "toast " + (ok ? "ok" : "err");
+    }
+
+    function clearToast() {
+      elToast.className = "toast";
+      elToast.textContent = "";
+    }
+
+    function setBusy(v) {
+      busy = v;
+      ["btn-send", "btn-new", "btn-clear", "btn-parse", "btn-download", "task-mode"].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = v;
+      });
+    }
+
+    function renderMarkdown(text) {
+      if (!text) return "";
+      if (!window.marked) {
+        const esc = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        return esc.replace(/\n/g, "<br>");
+      }
+      const html = marked.parse(text);
+      const wrap = document.createElement("div");
+      wrap.innerHTML = html;
+      wrap.querySelectorAll("a").forEach((a) => {
+        a.setAttribute("rel", "noopener noreferrer");
+        a.setAttribute("target", "_blank");
+      });
+      return wrap.innerHTML;
+    }
+
+    function finalizeAssistant(bodyEl, rawText) {
+      bodyEl.classList.remove("streaming");
+      bodyEl.dataset.raw = rawText || "";
+      bodyEl.innerHTML = renderMarkdown(rawText || "(空回复)");
+    }
+
+    function updateMeta(data) {
+      const parts = [];
+      if (data.mode || currentMode) parts.push("mode: " + (data.mode || currentMode));
+      if (data.session_id) parts.push("session: " + data.session_id);
+      if (data.agent_id) parts.push("agent: " + data.agent_id);
+      if (data.model) parts.push("model: " + data.model);
+      elMeta.textContent = parts.length ? parts.join(" | ") : "会话未创建";
+    }
+
+    function applyModeUi(data) {
+      currentMode = data.mode || currentMode;
+      if (data.placeholder) elInput.placeholder = data.placeholder;
+      if (typeof data.hint === "string") elModeHint.textContent = data.hint;
+      if (typeof data.system_prompt === "string") elSystem.value = data.system_prompt;
+      elFetchPanel.classList.toggle("hidden", currentMode !== "fetch");
+      if (elMode.value !== currentMode) elMode.value = currentMode;
+    }
+
+    function appendMsg(role, text, { markdown = false } = {}) {
+      const div = document.createElement("div");
+      div.className = "msg " + role;
+      const roleEl = document.createElement("div");
+      roleEl.className = "role";
+      roleEl.textContent = role === "user" ? "你" : role === "system" ? "系统" : "助手";
+      const body = document.createElement("div");
+      body.className = "body";
+      if (role === "assistant" && markdown) {
+        finalizeAssistant(body, text);
+      } else {
+        body.textContent = text;
+      }
+      div.appendChild(roleEl);
+      div.appendChild(body);
+      elMessages.appendChild(div);
+      elMessages.scrollTop = elMessages.scrollHeight;
+      return body;
+    }
+
+    async function loadModes() {
+      const res = await fetch("/api/modes");
+      const data = await res.json();
+      elMode.innerHTML = "";
+      (data.modes || []).forEach((m) => {
+        const opt = document.createElement("option");
+        opt.value = m.id;
+        opt.textContent = m.label;
+        opt.dataset.placeholder = m.placeholder || "";
+        opt.dataset.hint = m.hint || "";
+        elMode.appendChild(opt);
+      });
+      currentMode = data.default || "chat";
+      elMode.value = currentMode;
+    }
+
+    async function createSession(mode) {
+      clearToast();
+      setBusy(true);
+      try {
+        const res = await fetch("/api/session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: mode || currentMode || "chat" }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || "创建会话失败");
+        sessionId = data.session_id;
+        elMessages.innerHTML = "";
+        applyModeUi(data);
+        updateMeta(data);
+        toast("会话已创建", true);
+      } catch (e) {
+        toast(String(e.message || e), false);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function switchMode(mode) {
+      if (!mode || mode === currentMode) return;
+      if (!sessionId) {
+        currentMode = mode;
+        await createSession(mode);
+        return;
+      }
+      setBusy(true);
+      try {
+        const res = await fetch("/api/mode", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sessionId, mode }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || "切换模式失败");
+        elMessages.innerHTML = "";
+        applyModeUi(data);
+        updateMeta({ session_id: sessionId, agent_id: data.agent_id, mode: data.mode });
+        toast("已切换模式并新建会话: " + data.mode, true);
+      } catch (e) {
+        toast(String(e.message || e), false);
+        elMode.value = currentMode;
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function clearHistory() {
+      if (!sessionId) return toast("请先新建会话", false);
+      setBusy(true);
+      try {
+        const res = await fetch("/api/session/clear", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sessionId }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || "清空失败");
+        elMessages.innerHTML = "";
+        updateMeta({ session_id: sessionId, agent_id: data.agent_id, mode: data.mode || currentMode });
+        toast("历史已清空", true);
+      } catch (e) {
+        toast(String(e.message || e), false);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function saveSystemPrompt() {
+      if (!sessionId) return toast("请先新建会话", false);
+      try {
+        const res = await fetch("/api/system-prompt", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: sessionId,
+            system_prompt: elSystem.value,
+          }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || "保存失败");
+        toast("System Prompt 已保存", true);
+      } catch (e) {
+        toast(String(e.message || e), false);
+      }
+    }
+
+    async function sendMessage() {
+      if (busy) return;
+      if (!sessionId) {
+        await createSession(currentMode);
+        if (!sessionId) return;
+      }
+      const text = elInput.value.trim();
+      if (!text) return;
+
+      clearToast();
+      appendMsg("user", text);
+      elInput.value = "";
+      const bodyEl = appendMsg("assistant", "");
+      bodyEl.classList.add("streaming");
+      setBusy(true);
+
+      let raw = "";
+      try {
+        const res = await fetch("/api/chat/stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: sessionId,
+            message: text,
+            use_knowledge: elKb.checked,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || ("HTTP " + res.status));
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
+          for (const part of parts) {
+            const line = part.split("\n").find((l) => l.startsWith("data: "));
+            if (!line) continue;
+            let evt;
+            try {
+              evt = JSON.parse(line.slice(6));
+            } catch (_) {
+              continue;
+            }
+            if (evt.type === "delta" && evt.text) {
+              raw += evt.text;
+              bodyEl.textContent = raw;
+              elMessages.scrollTop = elMessages.scrollHeight;
+            } else if (evt.type === "done") {
+              if (evt.agent_id) {
+                updateMeta({ session_id: sessionId, agent_id: evt.agent_id, mode: currentMode });
+              }
+            } else if (evt.type === "error") {
+              throw new Error(evt.error || "流式输出失败");
+            }
+          }
+        }
+        finalizeAssistant(bodyEl, raw || "(空回复)");
+      } catch (e) {
+        finalizeAssistant(bodyEl, raw || ("错误: " + (e.message || e)));
+        toast(String(e.message || e), false);
+      } finally {
+        setBusy(false);
+        elInput.focus();
+      }
+    }
+
+    async function parseUrl() {
+      const url = elFetchUrl.value.trim();
+      if (!url) return toast("请填写 URL", false);
+      setBusy(true);
+      clearToast();
+      try {
+        const res = await fetch("/api/download/parse", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || "解析失败");
+        elFormatList.classList.remove("hidden");
+        elFormatList.innerHTML = "";
+        selectedFormat = (data.formats && data.formats[0] && data.formats[0].format_id) || "bestaudio/best";
+        (data.formats || []).forEach((f, i) => {
+          const line = document.createElement("label");
+          line.className = "fmt-line";
+          const input = document.createElement("input");
+          input.type = "radio";
+          input.name = "fmt";
+          input.value = f.format_id;
+          if (i === 0) input.checked = true;
+          input.addEventListener("change", () => { selectedFormat = f.format_id; });
+          const span = document.createElement("span");
+          span.textContent = f.label;
+          line.appendChild(input);
+          line.appendChild(span);
+          elFormatList.appendChild(line);
+        });
+        toast("解析成功: " + (data.title || url), true);
+      } catch (e) {
+        toast(String(e.message || e), false);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function downloadUrl() {
+      const url = elFetchUrl.value.trim();
+      if (!url) return toast("请填写 URL", false);
+      setBusy(true);
+      clearToast();
+      try {
+        const res = await fetch("/api/download", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url, format_spec: selectedFormat }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || "下载失败");
+        const msg = "下载完成\n文件: " + data.name + "\n路径: " + data.path + "\n可切换到「文本精炼」继续分析。";
+        appendMsg("system", msg);
+        toast("下载完成: " + data.name, true);
+      } catch (e) {
+        toast(String(e.message || e), false);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    document.getElementById("btn-new").addEventListener("click", () => createSession(currentMode));
+    document.getElementById("btn-clear").addEventListener("click", clearHistory);
+    document.getElementById("btn-save-system").addEventListener("click", saveSystemPrompt);
+    document.getElementById("btn-send").addEventListener("click", sendMessage);
+    document.getElementById("btn-parse").addEventListener("click", parseUrl);
+    document.getElementById("btn-download").addEventListener("click", downloadUrl);
+    elMode.addEventListener("change", () => {
+      if (modeSwitching) return;
+      switchMode(elMode.value);
+    });
+    elInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+
+    (async () => {
+      try {
+        await loadModes();
+      } catch (e) {
+        toast("加载模式失败: " + e, false);
+      }
+      await createSession(currentMode);
+    })();
+  </script>
+</body>
+</html>

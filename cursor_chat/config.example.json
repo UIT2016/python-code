@@ -1,0 +1,17 @@
+{
+  "api_key": "",
+  "model": "composer-2.5",
+  "cwd": ".",
+  "mode": "plan",
+  "runtime": "cloud",
+  "base_url": "",
+  "auth_token": "",
+  "timeout": 300.0,
+  "max_retries": 2,
+  "system_prompt": "你是一个简洁、专业的助手，用中文回答用户问题。只做文字回答，不要修改文件。",
+  "knowledge": {
+    "directories": [],
+    "top_k": 5,
+    "max_chunk_chars": 1500
+  }
+}
