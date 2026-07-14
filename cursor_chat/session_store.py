@@ -50,11 +50,7 @@ class SessionStore:
         config = self._config()
         service = CursorChatService(config)
         if mode:
-            from cursor_chat.prompts.presets import get_preset
-
-            preset = get_preset(mode)
-            service.task_mode = preset.id
-            service.set_system_prompt(preset.system_prompt)
+            service.set_task_mode(mode, renew_session=False)
         service.new_session()
         session_id = uuid.uuid4().hex
         with self._lock:

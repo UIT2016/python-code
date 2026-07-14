@@ -73,10 +73,10 @@ class CursorChatService:
     def get_system_prompt(self) -> Optional[str]:
         return self._session.system_prompt
 
-    def set_model(self, model: str) -> None:
+    def set_model(self, model: str) -> str:
         """切换模型需新建会话（Agent 创建时绑定 model）。"""
         self.config.model = model
-        self.new_session()
+        return self.new_session()
 
     def new_session(self) -> str:
         return self._session.new_session()

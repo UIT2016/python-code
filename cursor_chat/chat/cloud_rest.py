@@ -124,6 +124,53 @@ class CloudRestClient:
         except ChatStartupError:
             pass
 
+    def list_models(self) -> List[str]:
+        """拉取账号可用模型 ID。
+
+        优先 ``GET /v1/models``（Basic），兼容 ``items`` / ``models`` 数组为字符串或带 ``id`` 的对象。
+        若解析为空则回退 ``GET /v0/models``（常返回可直接用于 create agent 的完整 ID）。
+        """
+        data = self.request("GET", "/v1/models")
+        ids = self._parse_model_ids(data)
+        if ids:
+            return ids
+        # v1 结构偶有变更；v0 多为扁平字符串列表
+        try:
+            data_v0 = self.request("GET", "/v0/models")
+            ids = self._parse_model_ids(data_v0)
+        except ChatStartupError:
+            ids = []
+        if not ids:
+            raise ChatStartupError(f"Cloud API /v1/models 未返回可用模型: {data!r}")
+        return ids
+
+    @staticmethod
+    def _parse_model_ids(data: Any) -> List[str]:
+        raw = None
+        if isinstance(data, dict):
+            raw = data.get("items")
+            if raw is None:
+                raw = data.get("models")
+        elif isinstance(data, list):
+            raw = data
+        if not isinstance(raw, list):
+            return []
+
+        ids: List[str] = []
+        seen: set[str] = set()
+        for item in raw:
+            mid: Optional[str] = None
+            if isinstance(item, str) and item.strip():
+                mid = item.strip()
+            elif isinstance(item, dict):
+                cand = item.get("id") or item.get("model") or item.get("name")
+                if cand and str(cand).strip():
+                    mid = str(cand).strip()
+            if mid and mid not in seen:
+                seen.add(mid)
+                ids.append(mid)
+        return ids
+
 
 @dataclass
 class CloudRestRunResult:

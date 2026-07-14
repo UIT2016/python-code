@@ -19,6 +19,8 @@ if str(_ROOT) not in sys.path:
 
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
+from cursor_chat.chat.cloud_rest import CloudRestClient
+from cursor_chat.config import load_chat_config
 from cursor_chat.download.ytdlp_util import (
     DOWNLOAD_DIR,
     DownloadError,
@@ -26,7 +28,7 @@ from cursor_chat.download.ytdlp_util import (
     download,
     extract_info,
 )
-from cursor_chat.exceptions import ChatError, ChatRunError, ChatStartupError
+from cursor_chat.exceptions import ChatConfigError, ChatError, ChatRunError, ChatStartupError
 from cursor_chat.prompts.presets import DEFAULT_MODE, get_preset, list_modes
 from cursor_chat.session_store import session_store
 
@@ -66,6 +68,50 @@ def create_app() -> Flask:
     @app.route("/api/modes", methods=["GET"])
     def modes():
         return jsonify({"ok": True, "modes": list_modes(), "default": DEFAULT_MODE})
+
+    @app.route("/api/models", methods=["GET"])
+    def models():
+        current = ""
+        try:
+            cfg = load_chat_config()
+            current = cfg.model or ""
+            client = CloudRestClient(cfg.api_key, timeout=float(cfg.timeout))
+            ids = client.list_models()
+            return jsonify({"ok": True, "models": [{"id": mid} for mid in ids], "current": current})
+        except ChatStartupError as exc:
+            return _json_error(str(exc), 502, retryable=exc.is_retryable, current=current, models=[])
+        except ChatConfigError as exc:
+            return _json_error(str(exc), 500, current=current, models=[])
+        except ChatError as exc:
+            return _json_error(str(exc), 500, current=current, models=[])
+
+    @app.route("/api/model", methods=["POST"])
+    def set_model():
+        data = _get_json()
+        session_id = (data.get("session_id") or "").strip()
+        model = (data.get("model") or "").strip()
+        if not session_id:
+            return _json_error("缺少 session_id")
+        if not model:
+            return _json_error("缺少 model")
+        service = session_store.get(session_id)
+        if service is None:
+            return _json_error("会话不存在或已过期", 404)
+        try:
+            agent_id = service.set_model(model)
+            return jsonify(
+                {
+                    "ok": True,
+                    "session_id": session_id,
+                    "agent_id": agent_id,
+                    "model": service.config.model,
+                    "mode": service.task_mode,
+                }
+            )
+        except ChatStartupError as exc:
+            return _json_error(str(exc), 502, retryable=exc.is_retryable)
+        except ChatError as exc:
+            return _json_error(str(exc), 500)
 
     @app.route("/api/session", methods=["POST"])
     def create_session():
@@ -111,6 +157,7 @@ def create_app() -> Flask:
                     "ok": True,
                     "session_id": session_id,
                     "agent_id": agent_id,
+                    "model": service.config.model,
                     "mode": service.task_mode,
                     "system_prompt": service.get_system_prompt() or "",
                     "placeholder": preset.placeholder,

@@ -40,6 +40,7 @@
       padding: 0.5rem 0.65rem; font-size: 0.9rem;
     }
     select { width: auto; min-width: 140px; }
+    #model-select { min-width: 220px; max-width: 360px; }
     textarea { resize: vertical; min-height: 72px; font-family: inherit; }
     .toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.75rem; }
     .btn {
@@ -101,11 +102,14 @@
   <div class="wrap">
     <div class="card">
       <h1>cursor_chat</h1>
-      <p class="hint">Cursor 驱动的专业任务聊天。切换模式会新建会话；助手回复支持 Markdown。</p>
+      <p class="hint">Cursor 驱动的专业任务聊天。切换模式/模型会新建会话；助手回复支持 Markdown。</p>
       <div class="meta" id="session-meta">会话未创建</div>
       <div class="toolbar">
         <label class="check">任务模式
           <select id="task-mode"></select>
+        </label>
+        <label class="check">模型
+          <select id="model-select"></select>
         </label>
         <button type="button" class="btn green" id="btn-new">新建会话</button>
         <button type="button" class="btn secondary" id="btn-clear">清空历史</button>
@@ -148,8 +152,8 @@
     let sessionId = null;
     let busy = false;
     let currentMode = "chat";
+    let currentModel = "";
     let selectedFormat = "bestaudio/best";
-    let modeSwitching = false;
 
     const elMessages = document.getElementById("messages");
     const elInput = document.getElementById("input");
@@ -158,6 +162,7 @@
     const elSystem = document.getElementById("system-prompt");
     const elKb = document.getElementById("use-kb");
     const elMode = document.getElementById("task-mode");
+    const elModel = document.getElementById("model-select");
     const elModeHint = document.getElementById("mode-hint");
     const elFetchPanel = document.getElementById("fetch-panel");
     const elFetchUrl = document.getElementById("fetch-url");
@@ -179,7 +184,7 @@
 
     function setBusy(v) {
       busy = v;
-      ["btn-send", "btn-new", "btn-clear", "btn-parse", "btn-download", "task-mode"].forEach((id) => {
+      ["btn-send", "btn-new", "btn-clear", "btn-parse", "btn-download", "task-mode", "model-select"].forEach((id) => {
         const el = document.getElementById(id);
         if (el) el.disabled = v;
       });
@@ -210,10 +215,23 @@
     function updateMeta(data) {
       const parts = [];
       if (data.mode || currentMode) parts.push("mode: " + (data.mode || currentMode));
+      if (data.model || currentModel) parts.push("model: " + (data.model || currentModel));
       if (data.session_id) parts.push("session: " + data.session_id);
       if (data.agent_id) parts.push("agent: " + data.agent_id);
-      if (data.model) parts.push("model: " + data.model);
       elMeta.textContent = parts.length ? parts.join(" | ") : "会话未创建";
+    }
+
+    function syncModelSelect(modelId) {
+      if (!modelId) return;
+      currentModel = modelId;
+      const exists = Array.from(elModel.options).some((o) => o.value === modelId);
+      if (!exists) {
+        const opt = document.createElement("option");
+        opt.value = modelId;
+        opt.textContent = modelId;
+        elModel.appendChild(opt);
+      }
+      elModel.value = modelId;
     }
 
     function applyModeUi(data) {
@@ -221,6 +239,7 @@
       if (data.placeholder) elInput.placeholder = data.placeholder;
       if (typeof data.hint === "string") elModeHint.textContent = data.hint;
       if (typeof data.system_prompt === "string") elSystem.value = data.system_prompt;
+      if (data.model) syncModelSelect(data.model);
       elFetchPanel.classList.toggle("hidden", currentMode !== "fetch");
       if (elMode.value !== currentMode) elMode.value = currentMode;
     }
@@ -259,6 +278,69 @@
       });
       currentMode = data.default || "chat";
       elMode.value = currentMode;
+    }
+
+    async function loadModels() {
+      try {
+        const res = await fetch("/api/models");
+        const data = await res.json();
+        elModel.innerHTML = "";
+        const ids = (data.models || []).map((m) => (typeof m === "string" ? m : m.id)).filter(Boolean);
+        const current = data.current || currentModel || "";
+        if (current && !ids.includes(current)) ids.unshift(current);
+        if (!ids.length && current) ids.push(current);
+        ids.forEach((id) => {
+          const opt = document.createElement("option");
+          opt.value = id;
+          opt.textContent = id;
+          elModel.appendChild(opt);
+        });
+        if (current) syncModelSelect(current);
+        if (!data.ok) throw new Error(data.error || "拉取模型列表失败");
+      } catch (e) {
+        if (!elModel.options.length && currentModel) {
+          const opt = document.createElement("option");
+          opt.value = currentModel;
+          opt.textContent = currentModel;
+          elModel.appendChild(opt);
+        }
+        toast(String(e.message || e), false);
+      }
+    }
+
+    async function switchModel(model) {
+      if (!model || model === currentModel) return;
+      if (!sessionId) {
+        currentModel = model;
+        await createSession(currentMode);
+        syncModelSelect(model);
+        return;
+      }
+      const prev = currentModel;
+      setBusy(true);
+      try {
+        const res = await fetch("/api/model", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sessionId, model }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || "切换模型失败");
+        elMessages.innerHTML = "";
+        syncModelSelect(data.model);
+        updateMeta({
+          session_id: sessionId,
+          agent_id: data.agent_id,
+          model: data.model,
+          mode: data.mode || currentMode,
+        });
+        toast("已切换模型并新建会话: " + data.model, true);
+      } catch (e) {
+        toast(String(e.message || e), false);
+        syncModelSelect(prev);
+      } finally {
+        setBusy(false);
+      }
     }
 
     async function createSession(mode) {
@@ -477,7 +559,7 @@
         });
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || "下载失败");
-        const msg = "下载完成\n文件: " + data.name + "\n路径: " + data.path + "\n可切换到「文本精炼」继续分析。";
+        const msg = "下载完成\n文件: " + data.name + "\n路径: " + data.path;
         appendMsg("system", msg);
         toast("下载完成: " + data.name, true);
       } catch (e) {
@@ -493,10 +575,8 @@
     document.getElementById("btn-send").addEventListener("click", sendMessage);
     document.getElementById("btn-parse").addEventListener("click", parseUrl);
     document.getElementById("btn-download").addEventListener("click", downloadUrl);
-    elMode.addEventListener("change", () => {
-      if (modeSwitching) return;
-      switchMode(elMode.value);
-    });
+    elMode.addEventListener("change", () => switchMode(elMode.value));
+    elModel.addEventListener("change", () => switchModel(elModel.value));
     elInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
@@ -509,6 +589,11 @@
         await loadModes();
       } catch (e) {
         toast("加载模式失败: " + e, false);
+      }
+      try {
+        await loadModels();
+      } catch (e) {
+        toast("加载模型失败: " + e, false);
       }
       await createSession(currentMode);
     })();
