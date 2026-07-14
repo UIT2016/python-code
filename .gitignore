@@ -58,8 +58,6 @@ whisper/downloads/
 tool/download/
 tool/transcripts/
 
-# cursor_chat 模块：本地密钥（示例文件为 config.example.json）
-cursor_chat/
 
 # tool 模块：本地 API 密钥（示例文件为 api_key.example.json）
 tool/api_key.local.json
