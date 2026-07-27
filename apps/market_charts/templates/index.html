@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>A股量能 / 资金流</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1419; --card: #1a2332; --text: #e7ecf3; --muted: #8b9cb3;
+      --accent: #3d8bfd; --border: #2a3548; --in: #e8a87c; --out: #5dade2;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", "PingFang SC", sans-serif;
+      background: var(--bg); color: var(--text); margin: 0; padding: 1.25rem; line-height: 1.5;
+    }
+    .wrap { max-width: 1280px; margin: 0 auto; }
+    header {
+      display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+      gap: 0.75rem; margin-bottom: 1rem;
+    }
+    h1 { font-size: 1.25rem; font-weight: 600; margin: 0; }
+    .meta { font-size: 0.85rem; color: var(--muted); }
+    .submit {
+      background: var(--accent); color: #fff; border: none; border-radius: 8px;
+      padding: 0.45rem 1rem; font-size: 0.9rem; cursor: pointer;
+    }
+    .submit:disabled { opacity: 0.55; cursor: not-allowed; }
+    .submit:hover:not(:disabled) { filter: brightness(1.08); }
+    .grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;
+    }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+      padding: 0.85rem 1rem 0.5rem; min-height: 360px;
+    }
+    .card h2 { font-size: 0.95rem; font-weight: 600; margin: 0 0 0.35rem; }
+    .chart { width: 100%; height: 300px; }
+    .err {
+      margin-top: 0.75rem; padding: 0.55rem 0.75rem; border-radius: 8px;
+      background: #3d1f24; border: 1px solid #8b3a44; font-size: 0.82rem; color: #f5c6cb;
+      white-space: pre-wrap;
+    }
+    .err.hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>A股量能 / 资金流 Top 10</h1>
+        <div class="meta" id="updated">单位：亿元 · 加载中…</div>
+      </div>
+      <button class="submit" id="btnRefresh" type="button">刷新</button>
+    </header>
+    <div class="grid">
+      <section class="card">
+        <h2>主要指数成交额</h2>
+        <div class="chart" id="chartIndices"></div>
+      </section>
+      <section class="card">
+        <h2>行业板块成交额</h2>
+        <div class="chart" id="chartSectors"></div>
+      </section>
+      <section class="card">
+        <h2>板块资金流入（主力净流入）</h2>
+        <div class="chart" id="chartInflow"></div>
+      </section>
+      <section class="card">
+        <h2>板块资金流出（主力净流出）</h2>
+        <div class="chart" id="chartOutflow"></div>
+      </section>
+    </div>
+    <div class="err hidden" id="errBox"></div>
+  </div>
+  <script>
+    const charts = {
+      indices: echarts.init(document.getElementById("chartIndices")),
+      sectors: echarts.init(document.getElementById("chartSectors")),
+      inflow: echarts.init(document.getElementById("chartInflow")),
+      outflow: echarts.init(document.getElementById("chartOutflow")),
+    };
+
+    function barOption(titleHint, items, color) {
+      const names = (items || []).map((x) => x.name).reverse();
+      const values = (items || []).map((x) => x.value).reverse();
+      return {
+        tooltip: {
+          trigger: "axis",
+          axisPointer: { type: "shadow" },
+          formatter: (params) => {
+            const p = params[0];
+            return `${p.name}<br/>${p.marker}${p.seriesName}: ${p.value} 亿元`;
+          },
+        },
+        grid: { left: 96, right: 36, top: 12, bottom: 24 },
+        xAxis: {
+          type: "value",
+          axisLabel: { color: "#8b9cb3" },
+          splitLine: { lineStyle: { color: "#2a3548" } },
+          name: "亿元",
+          nameTextStyle: { color: "#8b9cb3" },
+        },
+        yAxis: {
+          type: "category",
+          data: names,
+          axisLabel: { color: "#e7ecf3", width: 88, overflow: "truncate" },
+          axisLine: { lineStyle: { color: "#2a3548" } },
+        },
+        series: [{
+          name: titleHint,
+          type: "bar",
+          data: values,
+          barMaxWidth: 22,
+          itemStyle: { color, borderRadius: [0, 4, 4, 0] },
+          label: {
+            show: true,
+            position: "right",
+            color: "#8b9cb3",
+            fontSize: 11,
+            formatter: ({ value }) => value,
+          },
+        }],
+      };
+    }
+
+    function render(data) {
+      const unit = data.unit || "亿元";
+      document.getElementById("updated").textContent =
+        `单位：${unit} · 更新时间 ${data.updated_at || "-"}`;
+      charts.indices.setOption(barOption("成交额", data.indices, "#3d8bfd"), true);
+      charts.sectors.setOption(barOption("成交额", data.sectors_volume, "#6ea8fe"), true);
+      charts.inflow.setOption(barOption("流入", data.inflow, "#e8a87c"), true);
+      charts.outflow.setOption(barOption("流出", data.outflow, "#5dade2"), true);
+
+      const errs = data.errors || {};
+      const keys = Object.keys(errs);
+      const box = document.getElementById("errBox");
+      if (keys.length) {
+        box.classList.remove("hidden");
+        box.textContent = keys.map((k) => `${k}: ${errs[k]}`).join("\n");
+      } else {
+        box.classList.add("hidden");
+        box.textContent = "";
+      }
+    }
+
+    async function load(force) {
+      const btn = document.getElementById("btnRefresh");
+      btn.disabled = true;
+      try {
+        const url = force ? "/api/overview?force=1" : "/api/overview";
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        render(await res.json());
+      } catch (e) {
+        const box = document.getElementById("errBox");
+        box.classList.remove("hidden");
+        box.textContent = String(e);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    document.getElementById("btnRefresh").addEventListener("click", () => load(true));
+    window.addEventListener("resize", () => {
+      Object.values(charts).forEach((c) => c.resize());
+    });
+    load(false);
+  </script>
+</body>
+</html>

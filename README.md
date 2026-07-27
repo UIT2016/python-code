@@ -8,6 +8,7 @@
 apps/           可运行业务
   message/      聊天室抓取 + 热点分析 (Flask :5000)
   tool/         视频下载 / ASR / 转录精炼 / 逻辑分析 (Flask :5001)
+  market_charts/ A股指数与板块量能、资金流柱状图 (Flask :5002)
   cursor_chat/  Cursor SDK 聊天 (Flask :5055)
 packages/       可复用库（lite_agent_sdk）
 experiments/    实验与草稿（非生产）
@@ -61,6 +62,17 @@ python apps\tool\app.py
 - `apps/tool/wind.local.json`
 - `apps/tool/wanxing.local.json`
 - `apps/tool/api_key.local.json`、cookies 等
+
+### market_charts（量能 / 资金流）
+
+```powershell
+$env:PYTHONPATH = "apps;packages"
+pip install -r apps\market_charts\requirements.txt
+python apps\market_charts\app.py
+# 浏览器 http://127.0.0.1:5002
+```
+
+数据来自东财公开接口（经 AkShare / 直连），无需本地密钥。
 
 ### cursor_chat
 
