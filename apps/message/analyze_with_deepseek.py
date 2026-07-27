@@ -7,10 +7,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from config_loader import SUPPORTED_LLM_PROVIDERS, load_config, resolve_llm_config
-from lite_agent_sdk import AnalysisOrchestratorAgent, SkillContext, create_llm_client_from_cfg
-
 BASE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BASE_DIR.parent.parent
+PACKAGES_DIR = REPO_ROOT / "packages"
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+if str(PACKAGES_DIR) not in sys.path:
+    sys.path.insert(0, str(PACKAGES_DIR))
+
+from config_loader import SUPPORTED_LLM_PROVIDERS, load_config, resolve_llm_config  # noqa: E402
+from lite_agent_sdk import AnalysisOrchestratorAgent, SkillContext, create_llm_client_from_cfg  # noqa: E402
+
 MESSAGE_DATA_DIR = BASE_DIR / "message_data"
 ANALYSIS_OUTPUT_DIR = BASE_DIR / "analysis_results"
 

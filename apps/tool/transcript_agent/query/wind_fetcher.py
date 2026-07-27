@@ -80,6 +80,35 @@ def json_dumps_safe(obj: Any) -> str:
         return str(obj)
 
 
+def decode_http_response_text(resp: requests.Response) -> str:
+    """Wind MCP 常不声明 charset，requests 默认 ISO-8859-1 会导致中文乱码。"""
+    try:
+        return resp.content.decode("utf-8")
+    except UnicodeDecodeError:
+        resp.encoding = resp.apparent_encoding or "utf-8"
+        return resp.text
+
+
+def _try_repair_mojibake(text: str) -> str:
+    if not text or not any(ord(c) > 127 for c in text):
+        return text
+    try:
+        return text.encode("latin-1").decode("utf-8")
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        return text
+
+
+def repair_payload_encoding(obj: Any) -> Any:
+    """修复 UTF-8 被误按 Latin-1 解码后的 mojibake 字符串。"""
+    if isinstance(obj, str):
+        return _try_repair_mojibake(obj)
+    if isinstance(obj, dict):
+        return {k: repair_payload_encoding(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [repair_payload_encoding(v) for v in obj]
+    return obj
+
+
 def _collect_sse_data_payloads(text: str) -> List[str]:
     payloads: List[str] = []
     for block in _SSE_BLOCK_RE.split(text):
@@ -215,8 +244,8 @@ class WindAIFinClient:
         body = {"jsonrpc": "2.0", "id": int(time.time() * 1000), "method": method, "params": params}
         resp = requests.post(endpoint, headers=headers, json=body, timeout=timeout)
         if resp.status_code != 200:
-            raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:300]}")
-        payload = _parse_sse_or_json(resp.text)
+            raise RuntimeError(f"HTTP {resp.status_code}: {decode_http_response_text(resp)[:300]}")
+        payload = _parse_sse_or_json(decode_http_response_text(resp))
         if payload.get("error"):
             err = payload["error"]
             msg = err.get("message") if isinstance(err, dict) else str(err)
@@ -244,7 +273,7 @@ class WindAIFinClient:
         try:
             inner = json.loads(text)
         except json.JSONDecodeError:
-            return text
+            return repair_payload_encoding(text)
         if isinstance(inner, dict):
             if inner.get("mcp_tool_error_code") not in (None, 0):
                 raise RuntimeError(inner.get("mcp_tool_error_msg") or json_dumps_safe(inner))
@@ -254,7 +283,7 @@ class WindAIFinClient:
                     code = err.get("code") or ""
                     message = err.get("message") or ""
                     raise RuntimeError(f"{code}: {message}".strip(": ") or json_dumps_safe(err))
-        return inner
+        return repair_payload_encoding(inner)
 
     @staticmethod
     def _parse_tool_response(intent: str, payload: Any) -> List[FactItem]:

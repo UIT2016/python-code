@@ -11,6 +11,12 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
+
+# 仓库重组后包位于 apps/cursor_chat，保证从仓库根执行 python -m cursor_chat
+_APPS_DIR = Path(__file__).resolve().parents[1]
+if str(_APPS_DIR) not in sys.path:
+    sys.path.insert(0, str(_APPS_DIR))
 
 
 def main() -> int:

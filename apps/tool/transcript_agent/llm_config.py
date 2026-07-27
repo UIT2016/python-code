@@ -1,4 +1,4 @@
-"""LLM 配置：复用 message/config_loader。"""
+"""LLM 配置：复用 apps/message/config_loader 与 packages/lite_agent_sdk。"""
 from __future__ import annotations
 
 import sys
@@ -6,11 +6,13 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 TOOL_DIR = Path(__file__).resolve().parent.parent
-REPO_ROOT = TOOL_DIR.parent
-MESSAGE_DIR = REPO_ROOT / "message"
+REPO_ROOT = TOOL_DIR.parent.parent
+MESSAGE_DIR = REPO_ROOT / "apps" / "message"
+PACKAGES_DIR = REPO_ROOT / "packages"
 
-if str(MESSAGE_DIR) not in sys.path:
-    sys.path.insert(0, str(MESSAGE_DIR))
+for _p in (MESSAGE_DIR, PACKAGES_DIR):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 
 from config_loader import load_config, resolve_llm_config  # noqa: E402
 from lite_agent_sdk.base import create_llm_client, create_llm_client_from_cfg, llm_chat  # noqa: E402
@@ -23,6 +25,8 @@ __all__ = [
     "llm_chat",
     "MESSAGE_DIR",
     "TOOL_DIR",
+    "REPO_ROOT",
+    "PACKAGES_DIR",
 ]
 
 

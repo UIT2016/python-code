@@ -1,15 +1,20 @@
 import json
 import os
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
-from config_loader import load_config
 from flask import Flask, flash, render_template, request
 
 BASE_DIR = Path(__file__).resolve().parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+from config_loader import load_config  # noqa: E402
+
 MESSAGE_DATA_DIR = BASE_DIR / "message_data"
 
 cfg = load_config(BASE_DIR)

@@ -38,11 +38,15 @@ htmlcov/
 .env.*
 !.env.example
 
-# 消息模块：本地密钥与可选请求头覆盖（示例文件为 *.example.json）
-message/config.local.json
-message/header.local.json
-message/message_data/
-message/analysis_results/
+# message：本地密钥与数据
+apps/message/config.local.json
+apps/message/header.local.json
+apps/message/message_data/
+apps/message/analysis_results/
+apps/message/.cursor/
+
+# cursor_chat：本地配置
+apps/cursor_chat/config.local.json
 
 # 操作系统杂项
 .DS_Store
@@ -53,26 +57,30 @@ Desktop.ini
 # Jupyter
 .ipynb_checkpoints/
 
-# 本仓库：下载的中间文件目录
-whisper/downloads/
-tool/download/
-tool/transcripts/
+# tool：下载与转写中间文件
+apps/tool/download/
+apps/tool/transcripts/
+apps/tool/transcripts.zip
 
+# tool：本地 API 密钥与 Cookie
+apps/tool/api_key.local.json
+apps/tool/bilibili_cookies.local.txt
+apps/tool/*cookies*.txt
+!apps/tool/bilibili_cookies.example.txt
+apps/tool/wind.local.json
+apps/tool/wanxing.local.json
 
-# tool 模块：本地 API 密钥（示例文件为 api_key.example.json）
-tool/api_key.local.json
-tool/bilibili_cookies.local.txt
-tool/*cookies*.txt
-!tool/bilibili_cookies.example.txt
-tool/transcripts.zip
+# transcript_agent 产物
+apps/tool/transcript_agent/processed/
+apps/tool/transcript_agent/old_processed/
+apps/tool/transcript_agent/processed.zip
+apps/tool/transcript_agent/pr111ocessed.7z
+apps/tool/transcript_agent/rules/versions/
+apps/tool/transcript_agent/analysis_results/
 
-# AI Log Plugin 推荐忽略项
+# 资料目录（大文件）
+materials/securities/
+
+# AI Log Plugin
 .specstory/
 .ailog/
-tool/transcript_agent/processed/
-tool/transcript_agent/old_processed/
-tool/transcript_agent/processed.zip
-tool/transcript_agent/rules/versions/
-tool/transcript_agent/analysis_results/
-tool/wind.local.json
-tool/wanxing.local.json

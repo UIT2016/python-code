@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import requests
 
 from transcript_agent.query.models import FactBundle, FactItem, QueryContext
+from transcript_agent.query.wind_fetcher import decode_http_response_text, repair_payload_encoding
 from wind_config import DEFAULT_ALICE_URL
 
 ProgressCallback = Callable[[str], None]
@@ -350,15 +351,16 @@ class WindAliceClient:
             timeout=self.timeout,
         )
         if resp.status_code != 200:
-            raise RuntimeError(f"Alice HTTP {resp.status_code}: {resp.text[:300]}")
+            raise RuntimeError(f"Alice HTTP {resp.status_code}: {decode_http_response_text(resp)[:300]}")
 
         content_type = (resp.headers.get("content-type") or "").lower()
         if "text/event-stream" not in content_type:
-            raw = resp.text
+            raw = decode_http_response_text(resp)
             resp.close()
             events, parse_err = _parse_json_rpc_body(raw)
             if parse_err and not events:
                 raise RuntimeError(parse_err)
+            events = repair_payload_encoding(events)
             values, biz_err = extract_content_from_events(events)
             if biz_err:
                 raise RuntimeError(biz_err)

@@ -1,9 +1,15 @@
 import json
+import sys
+from pathlib import Path
 from typing import Dict, List
 
 import requests
 
-from message.config_loader import load_headers
+BASE_DIR = Path(__file__).resolve().parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+from config_loader import load_headers  # noqa: E402
 
 # ================== 配置（请根据实际情况更新） ==================
 API_URL = "https://mx2025.hhhuu.com/5/api/room/list"
